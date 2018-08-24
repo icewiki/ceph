@@ -1,7 +1,7 @@
 import { HttpClientTestingModule, HttpTestingController } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
 
-import { configureTestBed } from '../unit-test-helper';
+import { configureTestBed } from '../../../testing/unit-test-helper';
 import { RbdService } from './rbd.service';
 
 describe('RbdService', () => {
@@ -125,13 +125,5 @@ describe('RbdService', () => {
     service.deleteSnapshot('poolName', 'rbdName', 'snapshotName').subscribe();
     const req = httpTesting.expectOne('api/block/image/poolName/rbdName/snap/snapshotName');
     expect(req.request.method).toBe('DELETE');
-  });
-
-  describe('Encode decorator', () => {
-    it('should encode the imageName', () => {
-      service.get('poolName', 'rbd/name').subscribe();
-      const req = httpTesting.expectOne('api/block/image/poolName/rbd%2Fname');
-      expect(req.request.method).toBe('GET');
-    });
   });
 });

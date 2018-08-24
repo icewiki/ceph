@@ -2,6 +2,7 @@ import { Component, OnInit, TemplateRef, ViewChild } from '@angular/core';
 
 import { ConfigurationService } from '../../../shared/api/configuration.service';
 import { CdTableColumn } from '../../../shared/models/cd-table-column';
+import { CdTableFetchDataContext } from '../../../shared/models/cd-table-fetch-data-context';
 import { CdTableSelection } from '../../../shared/models/cd-table-selection';
 
 @Component({
@@ -66,15 +67,17 @@ export class ConfigurationComponent implements OnInit {
     runtime: 'The value can be updated at runtime.',
     no_mon_update:
       'Daemons/clients do not pull this value from the monitor config database. ' +
-      'We disallow setting this option via \'ceph config set ...\'. This option should be ' +
+      `We disallow setting this option via 'ceph config set ...'. This option should be ` +
       'configured via ceph.conf or via the command line.',
     startup: 'Option takes effect only during daemon startup.',
     cluster_create: 'Option only affects cluster creation.',
     create: 'Option only affects daemon creation.'
   };
 
-  @ViewChild('confValTpl') public confValTpl: TemplateRef<any>;
-  @ViewChild('confFlagTpl') public confFlagTpl: TemplateRef<any>;
+  @ViewChild('confValTpl')
+  public confValTpl: TemplateRef<any>;
+  @ViewChild('confFlagTpl')
+  public confFlagTpl: TemplateRef<any>;
 
   constructor(private configurationService: ConfigurationService) {}
 
@@ -114,10 +117,15 @@ export class ConfigurationComponent implements OnInit {
     this.selection = selection;
   }
 
-  getConfigurationList() {
-    this.configurationService.getConfigData().subscribe((data: any) => {
-      this.data = data;
-    });
+  getConfigurationList(context: CdTableFetchDataContext) {
+    this.configurationService.getConfigData().subscribe(
+      (data: any) => {
+        this.data = data;
+      },
+      () => {
+        context.error();
+      }
+    );
   }
 
   updateFilter() {

@@ -145,9 +145,16 @@ class TestOsdMkfsFilestore(object):
 
     @pytest.mark.parametrize('flag', mkfs_filestore_flags)
     def test_keyring_is_used(self, fake_call, monkeypatch, flag):
+        monkeypatch.setattr(prepare, '__release__', 'mimic')
         monkeypatch.setattr(system, 'chown', lambda path: True)
         prepare.osd_mkfs_filestore(1, 'asdf', keyring='secret')
         assert flag in fake_call.calls[0]['args'][0]
+
+    def test_keyring_is_used_luminous(self, fake_call, monkeypatch):
+        monkeypatch.setattr(prepare, '__release__', 'luminous')
+        monkeypatch.setattr(system, 'chown', lambda path: True)
+        prepare.osd_mkfs_filestore(1, 'asdf', keyring='secret')
+        assert '--keyfile' not in fake_call.calls[0]['args'][0]
 
 
 class TestOsdMkfsBluestore(object):
@@ -160,6 +167,12 @@ class TestOsdMkfsBluestore(object):
     def test_keyring_is_not_added(self, fake_call, monkeypatch):
         monkeypatch.setattr(system, 'chown', lambda path: True)
         prepare.osd_mkfs_bluestore(1, 'asdf')
+        assert '--keyfile' not in fake_call.calls[0]['args'][0]
+
+    def test_keyring_is_not_added_luminous(self, fake_call, monkeypatch):
+        monkeypatch.setattr(system, 'chown', lambda path: True)
+        prepare.osd_mkfs_bluestore(1, 'asdf')
+        monkeypatch.setattr(prepare, '__release__', 'luminous')
         assert '--keyfile' not in fake_call.calls[0]['args'][0]
 
     def test_wal_is_added(self, fake_call, monkeypatch):
@@ -353,3 +366,57 @@ class TestMkfsBluestore(object):
             '--osd-uuid', 'asdf-1234',
             '--setuser', 'ceph', '--setgroup', 'ceph'])
         assert expected in str(error)
+
+
+class TestGetJournalSize(object):
+
+    def test_undefined_size_fallbacks_formatted(self, conf_ceph_stub):
+        conf_ceph_stub(dedent("""
+        [global]
+        fsid = a25d19a6-7d57-4eda-b006-78e35d2c4d9f
+        """))
+        result = prepare.get_journal_size()
+        assert result == '5G'
+
+    def test_undefined_size_fallbacks_unformatted(self, conf_ceph_stub):
+        conf_ceph_stub(dedent("""
+        [global]
+        fsid = a25d19a6-7d57-4eda-b006-78e35d2c4d9f
+        """))
+        result = prepare.get_journal_size(lv_format=False)
+        assert result.gb.as_int() == 5
+
+    def test_defined_size_unformatted(self, conf_ceph_stub):
+        conf_ceph_stub(dedent("""
+        [global]
+        fsid = a25d19a6-7d57-4eda-b006-78e35d2c4d9f
+
+        [osd]
+        osd journal size = 10240
+        """))
+        result = prepare.get_journal_size(lv_format=False)
+        assert result.gb.as_int() == 10
+
+    def test_defined_size_formatted(self, conf_ceph_stub):
+        conf_ceph_stub(dedent("""
+        [global]
+        fsid = a25d19a6-7d57-4eda-b006-78e35d2c4d9f
+
+        [osd]
+        osd journal size = 10240
+        """))
+        result = prepare.get_journal_size()
+        assert result == '10G'
+
+    def test_refuse_tiny_journals(self, conf_ceph_stub):
+        conf_ceph_stub(dedent("""
+        [global]
+        fsid = a25d19a6-7d57-4eda-b006-78e35d2c4d9f
+
+        [osd]
+        osd journal size = 1024
+        """))
+        with pytest.raises(RuntimeError) as error:
+            prepare.get_journal_size()
+        assert 'journal sizes must be larger' in str(error)
+        assert 'detected: 1024.00 MB' in str(error)

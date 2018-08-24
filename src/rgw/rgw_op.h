@@ -312,7 +312,8 @@ public:
     RGWAccessControlPolicy * const bucket_acl,
     const boost::optional<rgw::IAM::Policy>& bucket_policy,
     const off_t start_ofs,
-    const off_t end_ofs);
+    const off_t end_ofs,
+    bool swift_slo);
   int handle_user_manifest(const char *prefix);
   int handle_slo_manifest(bufferlist& bl);
 
@@ -884,6 +885,7 @@ protected:
   RGWBucketInfo info;
   obj_version ep_objv;
   bool has_cors;
+  bool relaxed_region_enforcement;
   RGWCORSConfiguration cors_config;
   boost::optional<std::string> swift_ver_location;
   map<string, buffer::list> attrs;
@@ -894,7 +896,7 @@ protected:
   virtual bool need_metadata_upload() const { return false; }
 
 public:
-  RGWCreateBucket() : has_cors(false) {}
+  RGWCreateBucket() : has_cors(false), relaxed_region_enforcement(false) {}
 
   void emplace_attr(std::string&& key, buffer::list&& bl) {
     attrs.emplace(std::move(key), std::move(bl)); /* key and bl are r-value refs */
@@ -906,6 +908,8 @@ public:
   void init(RGWRados *store, struct req_state *s, RGWHandler *h) override {
     RGWOp::init(store, s, h);
     policy.set_ctx(s->cct);
+    relaxed_region_enforcement =
+	s->cct->_conf.get_val<bool>("rgw_relaxed_region_enforcement");
   }
   virtual int get_params() { return 0; }
   void send_response() override = 0;
@@ -1052,7 +1056,6 @@ public:
 
   virtual RGWPutObjProcessor *select_processor(RGWObjectCtx& obj_ctx, bool *is_multipart);
   void dispose_processor(RGWPutObjDataProcessor *processor);
-
   int verify_permission() override;
   void pre_exec() override;
   void execute() override;
@@ -1975,7 +1978,7 @@ static inline int rgw_get_request_metadata(CephContext* const cct,
        * as ObjectStore::get_max_attr_name_length() can set the limit even
        * lower than the "osd_max_attr_name_len" configurable.  */
       const size_t max_attr_name_len = \
-        cct->_conf.get_val<size_t>("rgw_max_attr_name_len");
+        cct->_conf.get_val<Option::size_t>("rgw_max_attr_name_len");
       if (max_attr_name_len && attr_name.length() > max_attr_name_len) {
         return -ENAMETOOLONG;
       }
@@ -1991,7 +1994,7 @@ static inline int rgw_get_request_metadata(CephContext* const cct,
       /* Swift allows administrators to limit the number of metadats items
        * send _in a single request_. */
       const auto rgw_max_attrs_num_in_req = \
-        cct->_conf.get_val<size_t>("rgw_max_attrs_num_in_req");
+        cct->_conf.get_val<uint64_t>("rgw_max_attrs_num_in_req");
       if (rgw_max_attrs_num_in_req &&
           ++valid_meta_count > rgw_max_attrs_num_in_req) {
         return -E2BIG;

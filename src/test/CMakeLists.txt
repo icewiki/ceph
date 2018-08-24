@@ -1,11 +1,10 @@
 include(AddCephTest)
 
-set(UNITTEST_LIBS gmock_main gmock gtest ${CMAKE_THREAD_LIBS_INIT} ${CMAKE_DL_LIBS})
-set(UNITTEST_CXX_FLAGS "-I${CMAKE_SOURCE_DIR}/src/googletest/googlemock/include -I${CMAKE_BINARY_DIR}/src/googletest/googlemock/include -I${CMAKE_SOURCE_DIR}/src/googletest/googletest/include -I${CMAKE_BINARY_DIR}/src/googletest/googletest/include -fno-strict-aliasing")
+set(UNITTEST_LIBS GMock::Main GMock::GMock GTest::GTest ${CMAKE_THREAD_LIBS_INIT} ${CMAKE_DL_LIBS})
 
 add_library(unit-main OBJECT unit.cc)
-set_source_files_properties(unit.cc PROPERTIES
-  COMPILE_FLAGS ${UNITTEST_CXX_FLAGS})
+target_include_directories(unit-main PRIVATE
+  $<TARGET_PROPERTY:GTest::GTest,INTERFACE_INCLUDE_DIRECTORIES>)
 
 add_subdirectory(cls_hello)
 add_subdirectory(cls_lock)
@@ -33,7 +32,9 @@ add_subdirectory(journal)
 add_subdirectory(libcephfs)
 add_subdirectory(librados)
 add_subdirectory(librados_test_stub)
-add_subdirectory(libradosstriper)
+if(WITH_LIBRADOSSTRIPER)
+  add_subdirectory(libradosstriper)
+endif()
 if(WITH_RBD)
   add_subdirectory(librbd)
 endif(WITH_RBD)
@@ -186,8 +187,6 @@ if(${WITH_RADOSGW})
     ${CURL_LIBRARIES}
     ${EXPAT_LIBRARIES}
     ${CMAKE_DL_LIBS} ${UNITTEST_LIBS})
-  set_target_properties(test_cors PROPERTIES COMPILE_FLAGS
-    ${UNITTEST_CXX_FLAGS})
 
   # ceph_test_cls_rgw_meta
   set(test_cls_rgw_meta_srcs test_rgw_admin_meta.cc)
@@ -209,8 +208,6 @@ if(${WITH_RADOSGW})
     ${CURL_LIBRARIES}
     ${EXPAT_LIBRARIES}
     ${CMAKE_DL_LIBS} ${UNITTEST_LIBS} ${CRYPTO_LIBS})
-  set_target_properties(ceph_test_cls_rgw_meta PROPERTIES
-    COMPILE_FLAGS ${UNITTEST_CXX_FLAGS})
 
   install(TARGETS
     ceph_test_cls_rgw_meta
@@ -242,8 +239,6 @@ if(${WITH_RADOSGW})
     ${EXTRALIBS}
     ${CRYPTO_LIBS}
     )
-  set_target_properties(ceph_test_cls_rgw_log PROPERTIES COMPILE_FLAGS
-    ${UNITTEST_CXX_FLAGS})
 
   # ceph_test_cls_rgw_opstate
   set(ceph_test_cls_rgw_opstate_srcs test_rgw_admin_opstate.cc)
@@ -270,15 +265,11 @@ if(${WITH_RADOSGW})
     ${CRYPTO_LIBS}
     ${EXTRALIBS}
     )
-  set_target_properties(ceph_test_cls_rgw_opstate PROPERTIES
-    COMPILE_FLAGS ${UNITTEST_CXX_FLAGS})
 
 # ceph_test_librgw_file (nfs-like RGW interface)
 add_executable(ceph_test_librgw_file
   librgw_file.cc
   )
-set_target_properties(ceph_test_librgw_file PROPERTIES COMPILE_FLAGS
-  ${UNITTEST_CXX_FLAGS})
 if(WITH_RADOSGW_FCGI_FRONTEND)
 target_include_directories(ceph_test_librgw_file SYSTEM PRIVATE ${FCGI_INCLUDE_DIR})
 endif(WITH_RADOSGW_FCGI_FRONTEND)
@@ -294,8 +285,6 @@ target_link_libraries(ceph_test_librgw_file
 add_executable(ceph_test_librgw_file_cd
   librgw_file_cd.cc
   )
-set_target_properties(ceph_test_librgw_file_cd PROPERTIES COMPILE_FLAGS
-  ${UNITTEST_CXX_FLAGS})
 target_link_libraries(ceph_test_librgw_file_cd
   rgw
   librados
@@ -308,8 +297,6 @@ target_link_libraries(ceph_test_librgw_file_cd
 add_executable(ceph_test_librgw_file_gp
   librgw_file_gp.cc
   )
-set_target_properties(ceph_test_librgw_file_gp PROPERTIES COMPILE_FLAGS
-  ${UNITTEST_CXX_FLAGS})
 target_link_libraries(ceph_test_librgw_file_gp
   rgw
   librados
@@ -322,8 +309,6 @@ target_link_libraries(ceph_test_librgw_file_gp
 add_executable(ceph_test_librgw_file_nfsns
   librgw_file_nfsns.cc
   )
-set_target_properties(ceph_test_librgw_file_nfsns PROPERTIES COMPILE_FLAGS
-  ${UNITTEST_CXX_FLAGS})
 if(WITH_RADOSGW_FCGI_FRONTEND)
 target_include_directories(ceph_test_librgw_file_nfsns SYSTEM PRIVATE ${FCGI_INCLUDE_DIR})
 endif(WITH_RADOSGW_FCGI_FRONTEND)
@@ -339,8 +324,6 @@ target_link_libraries(ceph_test_librgw_file_nfsns
 add_executable(ceph_test_librgw_file_aw
   librgw_file_aw.cc
   )
-set_target_properties(ceph_test_librgw_file_aw PROPERTIES COMPILE_FLAGS
-  ${UNITTEST_CXX_FLAGS})
 target_link_libraries(ceph_test_librgw_file_aw
   rgw
   librados
@@ -353,8 +336,6 @@ target_link_libraries(ceph_test_librgw_file_aw
 add_executable(ceph_test_librgw_file_marker
   librgw_file_marker.cc
   )
-set_target_properties(ceph_test_librgw_file_marker PROPERTIES COMPILE_FLAGS
-  ${UNITTEST_CXX_FLAGS})
 target_link_libraries(ceph_test_librgw_file_marker
   rgw
   librados
@@ -367,8 +348,6 @@ target_link_libraries(ceph_test_librgw_file_marker
 add_executable(ceph_test_rgw_token
   test_rgw_token.cc
   )
-set_target_properties(ceph_test_rgw_token PROPERTIES COMPILE_FLAGS
-  ${UNITTEST_CXX_FLAGS})
 target_link_libraries(ceph_test_rgw_token
   rgw
   os
@@ -382,8 +361,6 @@ add_executable(test_rgw_ldap
   ${CMAKE_SOURCE_DIR}/src/rgw/rgw_ldap.cc
   test_rgw_ldap.cc
   )
-set_target_properties(test_rgw_ldap PROPERTIES COMPILE_FLAGS
-  ${UNITTEST_CXX_FLAGS})
 target_link_libraries(test_rgw_ldap
   librados
   ceph-common
@@ -393,7 +370,6 @@ target_link_libraries(test_rgw_ldap
 
 # unittest_librgw_admin_user
 add_executable(ceph_test_librgw_admin_user test_librgw_admin_user.cc)
-set_target_properties(ceph_test_librgw_admin_user PROPERTIES COMPILE_FLAGS ${UNITTEST_CXX_FLAGS})
 target_link_libraries(ceph_test_librgw_admin_user
   rgw_admin_user
   cls_otp_client
@@ -440,8 +416,6 @@ install(TARGETS
 add_executable(ceph_test_filejournal
   test_filejournal.cc
   )
-set_target_properties(ceph_test_filejournal PROPERTIES COMPILE_FLAGS
-  ${UNITTEST_CXX_FLAGS})
 target_link_libraries(ceph_test_filejournal
   os
   ceph-common
@@ -468,13 +442,10 @@ add_executable(ceph_test_snap_mapper
   $<TARGET_OBJECTS:unit-main>
   )
 target_link_libraries(ceph_test_snap_mapper osd global ${BLKID_LIBRARIES} ${UNITTEST_LIBS})
-set_target_properties(ceph_test_snap_mapper PROPERTIES COMPILE_FLAGS ${UNITTEST_CXX_FLAGS})
 
 add_executable(ceph_test_stress_watch
   test_stress_watch.cc
   )
-set_target_properties(ceph_test_stress_watch PROPERTIES COMPILE_FLAGS
-  ${UNITTEST_CXX_FLAGS})
 target_link_libraries(ceph_test_stress_watch
   librados
   ${UNITTEST_LIBS}
@@ -517,23 +488,18 @@ endif(HAVE_BLKID)
 
 # ceph_test_admin_socket_output
 
-add_executable(ceph_test_admin_socket_output
-  test_admin_socket_output.cc
-  admin_socket_output.cc
-  admin_socket_output_tests.cc
-  )
-target_link_libraries(ceph_test_admin_socket_output
-  ceph-common)
-if(CXX_STDLIB STREQUAL "libstdc++")
+find_package(StdFilesystem)
+if(StdFilesystem_FOUND)
+  add_executable(ceph_test_admin_socket_output
+    test_admin_socket_output.cc
+    admin_socket_output.cc
+    admin_socket_output_tests.cc)
   target_link_libraries(ceph_test_admin_socket_output
-    -lstdc++fs)
-elseif(CXX_STDLIB STREQUAL "libc++")
-  target_link_libraries(ceph_test_admin_socket_output
-    -lc++experimental)
+    ceph-common StdFilesystem::filesystem)
+  install(TARGETS
+    ceph_test_admin_socket_output
+    DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif()
-install(TARGETS
-  ceph_test_admin_socket_output
-  DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 #make check starts here
 
@@ -572,6 +538,10 @@ endif(WITH_RBD)
 if(WITH_RADOSGW)
   add_dependencies(tests radosgw radosgw-admin)
 endif(WITH_RADOSGW)
+#add dependency from fio just to ensure the plugin build isn't failing
+if(WITH_FIO OR WITH_SYSTEM_FIO)
+  add_dependencies(tests fio_ceph_objectstore)
+endif()
 
 if(WITH_RBD)
   add_ceph_test(run-rbd-unit-tests.sh ${CMAKE_CURRENT_SOURCE_DIR}/run-rbd-unit-tests.sh)
@@ -643,12 +613,14 @@ add_ceph_unittest(unittest_workqueue)
 target_link_libraries(unittest_workqueue global)
 
 # unittest_striper
-add_executable(unittest_striper
-  test_striper.cc
-  $<TARGET_OBJECTS:unit-main>
-  )
-add_ceph_unittest(unittest_striper)
-target_link_libraries(unittest_striper global ${BLKID_LIBRARIES})
+if(WITH_LIBRADOSSTRIPER)
+  add_executable(unittest_striper
+    test_striper.cc
+    $<TARGET_OBJECTS:unit-main>
+    )
+  add_ceph_unittest(unittest_striper)
+  target_link_libraries(unittest_striper global ${BLKID_LIBRARIES})
+endif()
 
 # unittest_prebufferedstreambuf
 add_executable(unittest_prebufferedstreambuf

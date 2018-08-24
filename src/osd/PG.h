@@ -786,7 +786,11 @@ protected:
       if (p != missing_loc.end()) {
 	_dec_count(p->second);
 	p->second.erase(location);
-	_inc_count(p->second);
+        if (p->second.empty()) {
+          missing_loc.erase(p);
+        } else {
+          _inc_count(p->second);
+        }
       }
     }
 
@@ -1350,7 +1354,7 @@ protected:
   bool all_unfound_are_queried_or_lost(const OSDMapRef osdmap) const;
   virtual void dump_recovery_info(Formatter *f) const = 0;
 
-  bool calc_min_last_complete_ondisk() {
+  void calc_min_last_complete_ondisk() {
     eversion_t min = last_complete_ondisk;
     assert(!acting_recovery_backfill.empty());
     for (set<pg_shard_t>::iterator i = acting_recovery_backfill.begin();
@@ -1358,15 +1362,15 @@ protected:
 	 ++i) {
       if (*i == get_primary()) continue;
       if (peer_last_complete_ondisk.count(*i) == 0)
-	return false;   // we don't have complete info
+	return;   // we don't have complete info
       eversion_t a = peer_last_complete_ondisk[*i];
       if (a < min)
 	min = a;
     }
     if (min == min_last_complete_ondisk)
-      return false;
+      return;
     min_last_complete_ondisk = min;
-    return true;
+    return;
   }
 
   virtual void calc_trim_to() = 0;
@@ -1418,13 +1422,8 @@ protected:
     pg_shard_t fromosd,
     RecoveryCtx*);
 
-  void check_for_lost_objects();
-  void forget_lost_objects();
-
   void discover_all_missing(std::map<int, map<spg_t,pg_query_t> > &query_map);
   
-  void trim_write_ahead();
-
   map<pg_shard_t, pg_info_t>::const_iterator find_best_info(
     const map<pg_shard_t, pg_info_t> &infos,
     bool restrict_to_up_acting,
@@ -2887,7 +2886,6 @@ protected:
     bool transaction_applied = true,
     bool async = false);
   bool check_log_for_corruption(ObjectStore *store);
-  void trim_log();
 
   std::string get_corrupt_pg_log_name() const;
 

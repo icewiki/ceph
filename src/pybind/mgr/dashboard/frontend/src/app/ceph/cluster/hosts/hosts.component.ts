@@ -2,6 +2,7 @@ import { Component, OnInit, TemplateRef, ViewChild } from '@angular/core';
 
 import { HostService } from '../../../shared/api/host.service';
 import { CdTableColumn } from '../../../shared/models/cd-table-column';
+import { CdTableFetchDataContext } from '../../../shared/models/cd-table-fetch-data-context';
 import { Permissions } from '../../../shared/models/permissions';
 import { CephShortVersionPipe } from '../../../shared/pipes/ceph-short-version.pipe';
 import { AuthStorageService } from '../../../shared/services/auth-storage.service';
@@ -16,8 +17,10 @@ export class HostsComponent implements OnInit {
   columns: Array<CdTableColumn> = [];
   hosts: Array<object> = [];
   isLoadingHosts = false;
+  cdParams = { fromLink: '/hosts' };
 
-  @ViewChild('servicesTpl') public servicesTpl: TemplateRef<any>;
+  @ViewChild('servicesTpl')
+  public servicesTpl: TemplateRef<any>;
 
   constructor(
     private authStorageService: AuthStorageService,
@@ -49,7 +52,7 @@ export class HostsComponent implements OnInit {
     ];
   }
 
-  getHosts() {
+  getHosts(context: CdTableFetchDataContext) {
     if (this.isLoadingHosts) {
       return;
     }
@@ -79,6 +82,7 @@ export class HostsComponent implements OnInit {
       })
       .catch(() => {
         this.isLoadingHosts = false;
+        context.error();
       });
   }
 }

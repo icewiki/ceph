@@ -2008,14 +2008,23 @@ done:
     for (auto &it : crypt_http_responses)
       dump_header(s, it.first, it.second);
     s->formatter->open_object_section("PostResponse");
-    if (g_conf()->rgw_dns_name.length())
-      s->formatter->dump_format("Location", "%s/%s",
-				s->info.script_uri.c_str(),
-				s->object.name.c_str());
-    if (!s->bucket_tenant.empty())
+    std::string base_uri = compute_domain_uri(s);
+    if (!s->bucket_tenant.empty()){
+      s->formatter->dump_format("Location", "%s/%s:%s/%s",
+                                base_uri.c_str(),
+                                url_encode(s->bucket_tenant).c_str(),
+                                url_encode(s->bucket_name).c_str(),
+                                url_encode(s->object.name).c_str());
       s->formatter->dump_string("Tenant", s->bucket_tenant);
+    } else {
+      s->formatter->dump_format("Location", "%s/%s/%s",
+                                base_uri.c_str(),
+                                url_encode(s->bucket_name).c_str(),
+                                url_encode(s->object.name).c_str());
+    }
     s->formatter->dump_string("Bucket", s->bucket_name);
     s->formatter->dump_string("Key", s->object.name);
+    s->formatter->dump_string("ETag", etag);
     s->formatter->close_section();
   }
   s->err.message = err_msg;
@@ -2368,6 +2377,23 @@ int RGWPutCORS_ObjStore_S3::get_params()
 					     "CORSConfiguration"));
   if (!cors_config) {
     return -EINVAL;
+  }
+
+#define CORS_RULES_MAX_NUM      100
+  int max_num = s->cct->_conf->rgw_cors_rules_max_num;
+  if (max_num < 0) {
+    max_num = CORS_RULES_MAX_NUM;
+  }
+  int cors_rules_num = cors_config->get_rules().size();
+  if (cors_rules_num > max_num) {
+    ldout(s->cct, 4) << "An cors config can have up to "
+                     << max_num
+                     << " rules, request cors rules num: "
+                     << cors_rules_num << dendl;
+    op_ret = -ERR_INVALID_CORS_RULES_ERROR;
+    s->err.message = "The number of CORS rules should not exceed allowed limit of "
+                     + std::to_string(max_num) + " rules.";
+    return -ERR_INVALID_REQUEST;
   }
 
   // forward bucket cors requests to meta master zone
@@ -4206,7 +4232,7 @@ void rgw::auth::s3::LDAPEngine::shutdown() {
   }
 }
 
-/* LocalEndgine */
+/* LocalEngine */
 rgw::auth::Engine::result_t
 rgw::auth::s3::LocalEngine::authenticate(
   const boost::string_view& _access_key_id,

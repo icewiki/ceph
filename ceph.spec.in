@@ -26,6 +26,7 @@
 %bcond_without ceph_test_package
 %bcond_without cephfs_java
 %bcond_without lttng
+%bcond_without libradosstriper
 %global _remote_tarball_prefix https://download.ceph.com/tarballs/
 %endif
 %if 0%{?suse_version}
@@ -38,7 +39,9 @@
 %endif
 %if 0%{?is_opensuse}
 %bcond_without lttng
+%bcond_without libradosstriper
 %else
+%bcond_with libradosstriper
 %ifarch x86_64 aarch64
 %bcond_without lttng
 %else
@@ -51,6 +54,11 @@
 %bcond_with python2
 %else
 %bcond_without python2
+%endif
+%if 0%{?fedora}
+%bcond_without cephfs_shell
+%else
+%bcond_with cephfs_shell
 %endif
 %if 0%{without python2}
 %global _defined_if_python2_absent 1
@@ -177,6 +185,7 @@ BuildRequires:	python%{_python_buildid}-virtualenv
 BuildRequires:	socat
 %endif
 %if 0%{with seastar}
+BuildRequires:  c-ares-devel
 BuildRequires:  gnutls-devel
 BuildRequires:  hwloc-devel
 BuildRequires:  libpciaccess-devel
@@ -244,12 +253,7 @@ BuildRequires:	python3-Cython
 BuildRequires:	python%{_python_buildid}-cherrypy
 BuildRequires:	python%{_python_buildid}-routes
 BuildRequires:	python%{_python_buildid}-werkzeug
-%if 0%{?fedora}
 BuildRequires:	python%{_python_buildid}-bcrypt
-%endif
-%if 0%{?rhel}
-BuildRequires:	py-bcrypt
-%endif
 %endif
 %if 0%{?suse_version}
 BuildRequires:	python%{_python_buildid}-CherryPy
@@ -348,6 +352,7 @@ Requires:	python%{_python_buildid}-rados = %{_epoch_prefix}%{version}-%{release}
 Requires:	python%{_python_buildid}-rbd = %{_epoch_prefix}%{version}-%{release}
 Requires:	python%{_python_buildid}-cephfs = %{_epoch_prefix}%{version}-%{release}
 Requires:	python%{_python_buildid}-rgw = %{_epoch_prefix}%{version}-%{release}
+Requires:	python%{_python_buildid}-ceph-argparse = %{_epoch_prefix}%{version}-%{release}
 %if 0%{?fedora} || 0%{?rhel}
 Requires:	python%{_python_buildid}-prettytable
 Requires:	python%{_python_buildid}-requests
@@ -355,6 +360,9 @@ Requires:	python%{_python_buildid}-requests
 %if 0%{?suse_version}
 Requires:	python%{_python_buildid}-PrettyTable
 Requires:	python%{_python_buildid}-requests
+%endif
+%if 0%{with libradosstriper}
+Requires:	libradosstriper1 = %{_epoch_prefix}%{version}-%{release}
 %endif
 %{?systemd_requires}
 %if 0%{?suse_version}
@@ -402,12 +410,7 @@ Requires:       python%{_python_buildid}-jinja2
 Requires:       python%{_python_buildid}-routes
 Requires:       python%{_python_buildid}-werkzeug
 Requires:       pyOpenSSL%{_python_buildid}
-%if 0%{?fedora}
 Requires:	python%{_python_buildid}-bcrypt
-%endif
-%if 0%{?rhel}
-Requires:	py-bcrypt
-%endif
 %endif
 %if 0%{?suse_version}
 Requires:       python%{_python_buildid}-CherryPy
@@ -611,6 +614,7 @@ Requires:	librados2 = %{_epoch_prefix}%{version}-%{release}
 This package contains Python 3 libraries for interacting with Cephs RADOS
 object store.
 
+%if 0%{with libradosstriper}
 %package -n libradosstriper1
 Summary:	RADOS striping interface
 %if 0%{?suse_version}
@@ -635,6 +639,7 @@ Obsoletes:	libradosstriper1-devel < %{_epoch_prefix}%{version}-%{release}
 %description -n libradosstriper-devel
 This package contains libraries and headers needed to develop programs
 that use RADOS striping interface.
+%endif
 
 %package -n librbd1
 Summary:	RADOS block device client library
@@ -730,9 +735,8 @@ Summary:	Python 2 libraries for Ceph distributed file system
 Group:		Development/Libraries/Python
 %endif
 Requires:	libcephfs2 = %{_epoch_prefix}%{version}-%{release}
-%if 0%{?suse_version}
-Recommends: python-rados = %{_epoch_prefix}%{version}-%{release}
-%endif
+Requires:	python-rados = %{_epoch_prefix}%{version}-%{release}
+Requires:	python-ceph-argparse = %{_epoch_prefix}%{version}-%{release}
 Obsoletes:	python-ceph < %{_epoch_prefix}%{version}-%{release}
 %description -n python-cephfs
 This package contains Python 2 libraries for interacting with Cephs distributed
@@ -746,11 +750,24 @@ Group:		Development/Libraries/Python
 %endif
 Requires:	libcephfs2 = %{_epoch_prefix}%{version}-%{release}
 Requires:	python%{python3_pkgversion}-rados = %{_epoch_prefix}%{version}-%{release}
+Requires:	python%{python3_pkgversion}-ceph-argparse = %{_epoch_prefix}%{version}-%{release}
 %description -n python%{python3_pkgversion}-cephfs
 This package contains Python 3 libraries for interacting with Cephs distributed
 file system.
 
 %if 0%{with python2}
+%package -n python-ceph-argparse
+Summary:	Python 2 utility libraries for Ceph CLI
+%if 0%{?suse_version}
+Group:		Development/Libraries/Python
+%endif
+%description -n python-ceph-argparse
+This package contains types and routines for Python 2 used by the Ceph CLI as
+well as the RESTful interface. These have to do with querying the daemons for
+command-description information, validating user command input against those
+descriptions, and submitting the command to the appropriate daemon.
+%endif
+
 %package -n python%{python3_pkgversion}-ceph-argparse
 Summary:	Python 3 utility libraries for Ceph CLI
 %if 0%{?suse_version}
@@ -761,6 +778,19 @@ This package contains types and routines for Python 3 used by the Ceph CLI as
 well as the RESTful interface. These have to do with querying the daemons for
 command-description information, validating user command input against those
 descriptions, and submitting the command to the appropriate daemon.
+
+# python3-cmd2 and python3-colorama are not available in RHEL/CentOS, openSUSE
+# or SLES
+%if 0%{?fedora}
+%package -n cephfs-shell
+Summary:    Interactive shell for Ceph file system
+Requires:   python%{python3_pkgversion}-cmd2
+Requires:   python%{python3_pkgversion}-colorama
+Requires:   python%{python3_pkgversion}-cephfs
+%description -n cephfs-shell
+This package contains an interactive tool that allows accessing a Ceph
+file system without mounting it  by providing a nice pseudo-shell which
+works like an FTP client.
 %endif
 
 %if 0%{with ceph_test_package}
@@ -971,6 +1001,14 @@ ${CMAKE} .. \
 %else
     -DWITH_BOOST_CONTEXT=OFF \
 %endif
+%if 0%{with cephfs_shell}
+    -DWITH_CEPHFS_SHELL=ON \
+%endif
+%if 0%{with libradosstriper}
+    -DWITH_LIBRADOSSTRIPER=ON \
+%else
+    -DWITH_LIBRADOSSTRIPER=OFF \
+%endif
     -DBOOST_J=$CEPH_SMP_NCPUS
 
 make "$CEPH_MFLAGS_JOBS"
@@ -1028,13 +1066,14 @@ mkdir -p %{buildroot}%{_localstatedir}/lib/ceph/mon
 mkdir -p %{buildroot}%{_localstatedir}/lib/ceph/osd
 mkdir -p %{buildroot}%{_localstatedir}/lib/ceph/mds
 mkdir -p %{buildroot}%{_localstatedir}/lib/ceph/mgr
+mkdir -p %{buildroot}%{_localstatedir}/lib/ceph/crash
+mkdir -p %{buildroot}%{_localstatedir}/lib/ceph/crash/posted
 mkdir -p %{buildroot}%{_localstatedir}/lib/ceph/radosgw
 mkdir -p %{buildroot}%{_localstatedir}/lib/ceph/bootstrap-osd
 mkdir -p %{buildroot}%{_localstatedir}/lib/ceph/bootstrap-mds
 mkdir -p %{buildroot}%{_localstatedir}/lib/ceph/bootstrap-rgw
 mkdir -p %{buildroot}%{_localstatedir}/lib/ceph/bootstrap-mgr
 mkdir -p %{buildroot}%{_localstatedir}/lib/ceph/bootstrap-rbd
-mkdir -p %{buildroot}%{_localstatedir}/lib/ceph/crash
 
 %if 0%{?suse_version}
 # create __pycache__ directories and their contents
@@ -1050,6 +1089,7 @@ rm -rf %{buildroot}
 %files
 
 %files base
+%{_bindir}/ceph-crash
 %{_bindir}/crushtool
 %{_bindir}/monmaptool
 %{_bindir}/osdmaptool
@@ -1066,6 +1106,7 @@ rm -rf %{buildroot}
 %{_libdir}/ceph/erasure-code/libec_*.so*
 %dir %{_libdir}/ceph/compressor
 %{_libdir}/ceph/compressor/libceph_*.so*
+%{_unitdir}/ceph-crash.service
 %ifarch x86_64
 %dir %{_libdir}/ceph/crypto
 %{_libdir}/ceph/crypto/libceph_*.so*
@@ -1101,6 +1142,8 @@ rm -rf %{buildroot}
 %{_mandir}/man8/monmaptool.8*
 %{_mandir}/man8/ceph-kvstore-tool.8*
 #set up placeholder directories
+%attr(750,ceph,ceph) %dir %{_localstatedir}/lib/ceph/crash
+%attr(750,ceph,ceph) %dir %{_localstatedir}/lib/ceph/crash/posted
 %attr(750,ceph,ceph) %dir %{_localstatedir}/lib/ceph/tmp
 %attr(750,ceph,ceph) %dir %{_localstatedir}/lib/ceph/bootstrap-osd
 %attr(750,ceph,ceph) %dir %{_localstatedir}/lib/ceph/bootstrap-mds
@@ -1113,22 +1156,22 @@ rm -rf %{buildroot}
 %if 0%{?suse_version}
 %fillup_only
 if [ $1 -eq 1 ] ; then
-/usr/bin/systemctl preset ceph.target >/dev/null 2>&1 || :
+/usr/bin/systemctl preset ceph.target ceph-crash.service >/dev/null 2>&1 || :
 fi
 %endif
 %if 0%{?fedora} || 0%{?rhel}
-%systemd_post ceph.target
+%systemd_post ceph.target ceph-crash.service
 %endif
 if [ $1 -eq 1 ] ; then
-/usr/bin/systemctl start ceph.target >/dev/null 2>&1 || :
+/usr/bin/systemctl start ceph.target ceph-crash.service >/dev/null 2>&1 || :
 fi
 
 %preun base
 %if 0%{?suse_version}
-%service_del_preun ceph.target
+%service_del_preun ceph.target ceph-crash.service
 %endif
 %if 0%{?fedora} || 0%{?rhel}
-%systemd_preun ceph.target
+%systemd_preun ceph.target ceph-crash.service
 %endif
 
 %postun base
@@ -1204,15 +1247,6 @@ fi
 %config %{_sysconfdir}/bash_completion.d/radosgw-admin
 %config(noreplace) %{_sysconfdir}/ceph/rbdmap
 %{_unitdir}/rbdmap.service
-%if 0%{with python2}
-%{python_sitelib}/ceph_argparse.py*
-%{python_sitelib}/ceph_daemon.py*
-%else
-%{python3_sitelib}/ceph_argparse.py
-%{python3_sitelib}/__pycache__/ceph_argparse.cpython*.py*
-%{python3_sitelib}/ceph_daemon.py
-%{python3_sitelib}/__pycache__/ceph_daemon.cpython*.py*
-%endif
 %dir %{_udevrulesdir}
 %{_udevrulesdir}/50-rbd.rules
 %attr(3770,ceph,ceph) %dir %{_localstatedir}/log/ceph/
@@ -1638,6 +1672,7 @@ fi
 %{python3_sitearch}/rados.cpython*.so
 %{python3_sitearch}/rados-*.egg-info
 
+%if 0%{with libradosstriper}
 %files -n libradosstriper1
 %{_libdir}/libradosstriper.so.*
 
@@ -1650,6 +1685,7 @@ fi
 %{_includedir}/radosstriper/libradosstriper.h
 %{_includedir}/radosstriper/libradosstriper.hpp
 %{_libdir}/libradosstriper.so
+%endif
 
 %files -n librbd1
 %{_libdir}/librbd.so.*
@@ -1738,11 +1774,21 @@ fi
 %{python3_sitelib}/__pycache__/ceph_volume_client.cpython*.py*
 
 %if 0%{with python2}
+%files -n python-ceph-argparse
+%{python_sitelib}/ceph_argparse.py*
+%{python_sitelib}/ceph_daemon.py*
+%endif
+
 %files -n python%{python3_pkgversion}-ceph-argparse
 %{python3_sitelib}/ceph_argparse.py
 %{python3_sitelib}/__pycache__/ceph_argparse.cpython*.py*
 %{python3_sitelib}/ceph_daemon.py
 %{python3_sitelib}/__pycache__/ceph_daemon.cpython*.py*
+
+%if 0%{?fedora}
+%files -n cephfs-shell
+%{python3_sitelib}/cephfs_shell-*.egg-info
+%{_bindir}/cephfs-shell
 %endif
 
 %if 0%{with ceph_test_package}

@@ -32,6 +32,10 @@
 
 #include "CInode.h"
 #include "MDSCacheObject.h"
+#include "MDSContext.h"
+#include "cephfs_features.h"
+#include "SessionMap.h"
+#include "messages/MClientReply.h"
 
 class CDentry;
 class MDCache;
@@ -501,8 +505,8 @@ public:
 
 
 public:
-  void split(int bits, std::list<CDir*>& subs, list<MDSInternalContextBase*>& waiters, bool replay);
-  void merge(std::list<CDir*>& subs, std::list<MDSInternalContextBase*>& waiters, bool replay);
+  void split(int bits, std::list<CDir*>& subs, MDSInternalContextBase::vec& waiters, bool replay);
+  void merge(std::list<CDir*>& subs, MDSInternalContextBase::vec& waiters, bool replay);
 
   bool should_split() const {
     return (int)get_frag_size() > g_conf()->mds_bal_split_size;
@@ -514,9 +518,9 @@ public:
 
 private:
   void prepare_new_fragment(bool replay);
-  void prepare_old_fragment(map<string_snap_t, std::list<MDSInternalContextBase*> >& dentry_waiters, bool replay);
+  void prepare_old_fragment(map<string_snap_t, MDSInternalContextBase::vec >& dentry_waiters, bool replay);
   void steal_dentry(CDentry *dn);  // from another dir.  used by merge/split.
-  void finish_old_fragment(std::list<MDSInternalContextBase*>& waiters, bool replay);
+  void finish_old_fragment(MDSInternalContextBase::vec& waiters, bool replay);
   void init_fragment_pins();
 
 
@@ -561,22 +565,8 @@ private:
 	ls.insert(auth);
     }
   }
-  void encode_dirstat(bufferlist& bl, mds_rank_t whoami) {
-    /*
-     * note: encoding matches struct ceph_client_reply_dirfrag
-     */
-    frag_t frag = get_frag();
-    mds_rank_t auth;
-    std::set<mds_rank_t> dist;
-    
-    auth = dir_auth.first;
-    if (is_auth()) 
-      get_dist_spec(dist, whoami);
 
-    encode(frag, bl);
-    encode(auth, bl);
-    encode(dist, bl);
-  }
+  static void encode_dirstat(bufferlist& bl, const session_info_t& info, const DirStat& ds);
 
   void _encode_base(bufferlist& bl) {
     encode(first, bl);
@@ -658,7 +648,7 @@ protected:
 		     bool complete, int r);
 
   // -- commit --
-  mempool::mds_co::compact_map<version_t, mempool::mds_co::list<MDSInternalContextBase*> > waiting_for_commit;
+  mempool::mds_co::compact_map<version_t, MDSInternalContextBase::vec_alloc<mempool::mds_co::pool_allocator> > waiting_for_commit;
   void _commit(version_t want, int op_prio);
   void _omap_commit(int op_prio);
   void _encode_dentry(CDentry *dn, bufferlist& bl, const std::set<snapid_t> *snaps);
@@ -694,18 +684,18 @@ public:
 
   // -- waiters --
 protected:
-  mempool::mds_co::compact_map< string_snap_t, mempool::mds_co::list<MDSInternalContextBase*> > waiting_on_dentry; // FIXME string_snap_t not in mempool
+  mempool::mds_co::compact_map< string_snap_t, MDSInternalContextBase::vec_alloc<mempool::mds_co::pool_allocator> > waiting_on_dentry; // FIXME string_snap_t not in mempool
 
 public:
   bool is_waiting_for_dentry(std::string_view dname, snapid_t snap) {
     return waiting_on_dentry.count(string_snap_t(dname, snap));
   }
   void add_dentry_waiter(std::string_view dentry, snapid_t snap, MDSInternalContextBase *c);
-  void take_dentry_waiting(std::string_view dentry, snapid_t first, snapid_t last, std::list<MDSInternalContextBase*>& ls);
-  void take_sub_waiting(std::list<MDSInternalContextBase*>& ls);  // dentry or ino
+  void take_dentry_waiting(std::string_view dentry, snapid_t first, snapid_t last, MDSInternalContextBase::vec& ls);
+  void take_sub_waiting(MDSInternalContextBase::vec& ls);  // dentry or ino
 
   void add_waiter(uint64_t mask, MDSInternalContextBase *c) override;
-  void take_waiting(uint64_t mask, std::list<MDSInternalContextBase*>& ls) override;  // may include dentry waiters
+  void take_waiting(uint64_t mask, MDSInternalContextBase::vec& ls) override;  // may include dentry waiters
   void finish_waiting(uint64_t mask, int result = 0);    // ditto
   
 
@@ -719,7 +709,7 @@ public:
   void abort_import();
 
   // -- auth pins --
-  bool can_auth_pin() const override { return is_auth() && !(is_frozen() || is_freezing()); }
+  bool can_auth_pin(int *err_ret=nullptr) const override;
   int get_cum_auth_pins() const { return auth_pins + nested_auth_pins; }
   int get_auth_pins() const { return auth_pins; }
   int get_nested_auth_pins() const { return nested_auth_pins; }
@@ -741,13 +731,23 @@ public:
 
   void maybe_finish_freeze();
 
-  bool is_freezing() const override { return is_freezing_tree() || is_freezing_dir(); }
-  bool is_freezing_tree() const;
+  pair<bool,bool> is_freezing_or_frozen_tree() const;
+
+  bool is_freezing() const override { return is_freezing_dir() || is_freezing_tree(); }
+  bool is_freezing_tree() const {
+    if (!num_freezing_trees)
+      return false;
+    return is_freezing_or_frozen_tree().first;
+  }
   bool is_freezing_tree_root() const { return state & STATE_FREEZINGTREE; }
   bool is_freezing_dir() const { return state & STATE_FREEZINGDIR; }
 
   bool is_frozen() const override { return is_frozen_dir() || is_frozen_tree(); }
-  bool is_frozen_tree() const;
+  bool is_frozen_tree() const {
+    if (!num_frozen_trees)
+      return false;
+    return is_freezing_or_frozen_tree().second;
+  }
   bool is_frozen_tree_root() const { return state & STATE_FROZENTREE; }
   bool is_frozen_dir() const { return state & STATE_FROZENDIR; }
   

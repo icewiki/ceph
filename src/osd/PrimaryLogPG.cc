@@ -1634,8 +1634,8 @@ void PrimaryLogPG::calc_trim_to()
       pg_log.get_log().approx_size() > target) {
     dout(10) << __func__ << " approx pg log length =  "
              << pg_log.get_log().approx_size() << dendl;
-    size_t num_to_trim = std::min(pg_log.get_log().approx_size() - target,
-				  cct->_conf->osd_pg_log_trim_max);
+    uint64_t num_to_trim = std::min<uint64_t>(pg_log.get_log().approx_size() - target,
+                                              cct->_conf->osd_pg_log_trim_max);
     dout(10) << __func__ << " num_to_trim =  " << num_to_trim << dendl;
     if (num_to_trim < cct->_conf->osd_pg_log_trim_min &&
 	cct->_conf->osd_pg_log_trim_max >= cct->_conf->osd_pg_log_trim_min) {
@@ -1643,7 +1643,7 @@ void PrimaryLogPG::calc_trim_to()
     }
     list<pg_log_entry_t>::const_iterator it = pg_log.get_log().log.begin();
     eversion_t new_trim_to;
-    for (size_t i = 0; i < num_to_trim; ++i) {
+    for (uint64_t i = 0; i < num_to_trim; ++i) {
       new_trim_to = it->version;
       ++it;
       if (new_trim_to >= limit) {
@@ -5431,7 +5431,8 @@ int PrimaryLogPG::do_read(OpContext *ctx, OSDOp& osd_op) {
     int r = pgbackend->objects_read_sync(
       soid, op.extent.offset, op.extent.length, op.flags, &osd_op.outdata);
     // whole object?  can we verify the checksum?
-    if (r >= 0 && op.extent.length == oi.size && oi.is_data_digest()) {
+    if (r >= 0 && op.extent.offset == 0 &&
+        (uint64_t)r == oi.size && oi.is_data_digest()) {
       uint32_t crc = osd_op.outdata.crc32c(-1);
       if (oi.data_digest != crc) {
         osd->clog->error() << info.pgid << std::hex
@@ -5442,7 +5443,7 @@ int PrimaryLogPG::do_read(OpContext *ctx, OSDOp& osd_op) {
       }
     }
     if (r == -EIO) {
-      r = rep_repair_primary_object(soid, ctx->op);
+      r = rep_repair_primary_object(soid, ctx);
     }
     if (r >= 0)
       op.extent.length = r;
@@ -5536,7 +5537,7 @@ int PrimaryLogPG::do_sparse_read(OpContext *ctx, OSDOp& osd_op) {
       r = pgbackend->objects_read_sync(soid, miter->first, miter->second,
 				       op.flags, &tmpbl);
       if (r == -EIO) {
-        r = rep_repair_primary_object(soid, ctx->op);
+        r = rep_repair_primary_object(soid, ctx);
       }
       if (r < 0) {
 	return r;
@@ -5583,8 +5584,10 @@ int PrimaryLogPG::do_sparse_read(OpContext *ctx, OSDOp& osd_op) {
           << " full-object read crc 0x" << crc
           << " != expected 0x" << oi.data_digest
           << std::dec << " on " << soid;
-        // FIXME fall back to replica or something?
-        return -EIO;
+        r = rep_repair_primary_object(soid, ctx);
+	if (r < 0) {
+	  return r;
+	}
       }
     }
 
@@ -5669,9 +5672,9 @@ int PrimaryLogPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
     // munge ZERO -> TRUNCATE?  (don't munge to DELETE or we risk hosing attributes)
     if (op.op == CEPH_OSD_OP_ZERO &&
         obs.exists &&
-        op.extent.offset < osd->osd_max_object_size &&
+        op.extent.offset < static_cast<Option::size_t>(osd->osd_max_object_size) &&
         op.extent.length >= 1 &&
-        op.extent.length <= osd->osd_max_object_size &&
+        op.extent.length <= static_cast<Option::size_t>(osd->osd_max_object_size) &&
 	op.extent.offset + op.extent.length >= oi.size) {
       if (op.extent.offset >= oi.size) {
         // no-op
@@ -6294,7 +6297,6 @@ int PrimaryLogPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
         t->set_alloc_hint(soid, op.alloc_hint.expected_object_size,
                           op.alloc_hint.expected_write_size,
 			  op.alloc_hint.flags);
-        ctx->delta_stats.num_wr++;
         result = 0;
       }
       break;
@@ -6370,8 +6372,9 @@ int PrimaryLogPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 	    oi.truncate_size = op.extent.truncate_size;
 	  }
 	}
-	result = check_offset_and_length(op.extent.offset, op.extent.length,
-          osd->osd_max_object_size, get_dpp());
+	result = check_offset_and_length(
+	  op.extent.offset, op.extent.length,
+	  static_cast<Option::size_t>(osd->osd_max_object_size), get_dpp());
 	if (result < 0)
 	  break;
 
@@ -6416,8 +6419,9 @@ int PrimaryLogPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 	  result = -EINVAL;
 	  break;
 	}
-	result = check_offset_and_length(0, op.extent.length,
-          osd->osd_max_object_size, get_dpp());
+	result = check_offset_and_length(
+	  0, op.extent.length,
+          static_cast<Option::size_t>(osd->osd_max_object_size), get_dpp());
 	if (result < 0)
 	  break;
 
@@ -6464,8 +6468,9 @@ int PrimaryLogPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
       }
       ++ctx->num_write;
       { // zero
-	result = check_offset_and_length(op.extent.offset, op.extent.length,
-          osd->osd_max_object_size, get_dpp());
+	result = check_offset_and_length(
+	  op.extent.offset, op.extent.length,
+          static_cast<Option::size_t>(osd->osd_max_object_size), get_dpp());
 	if (result < 0)
 	  break;
  
@@ -6529,8 +6534,9 @@ int PrimaryLogPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 	  break;
 	}
 
-        result = check_offset_and_length(op.extent.offset, op.extent.length,
-          osd->osd_max_object_size, get_dpp());
+        result = check_offset_and_length(
+	  op.extent.offset, op.extent.length,
+          static_cast<Option::size_t>(osd->osd_max_object_size), get_dpp());
         if (result < 0)
 	  break;
 
@@ -12672,7 +12678,8 @@ uint64_t PrimaryLogPG::recover_replicas(uint64_t max, ThreadPool::TPHandle &hand
   assert(!acting_recovery_backfill.empty());
   // choose replicas to recover, replica has the shortest missing list first
   // so we can bring it back to normal ASAP
-  std::vector<std::pair<unsigned int, pg_shard_t>> replicas_by_num_missing;
+  std::vector<std::pair<unsigned int, pg_shard_t>> replicas_by_num_missing,
+    async_by_num_missing;
   replicas_by_num_missing.reserve(acting_recovery_backfill.size() - 1);
   for (auto &p: acting_recovery_backfill) {
     if (p == get_primary()) {
@@ -12682,16 +12689,24 @@ uint64_t PrimaryLogPG::recover_replicas(uint64_t max, ThreadPool::TPHandle &hand
     assert(pm != peer_missing.end());
     auto nm = pm->second.num_missing();
     if (nm != 0) {
-      replicas_by_num_missing.push_back(make_pair(nm, p));
+      if (async_recovery_targets.count(p)) {
+        async_by_num_missing.push_back(make_pair(nm, p));
+      } else {
+        replicas_by_num_missing.push_back(make_pair(nm, p));
+      }
     }
   }
   // sort by number of missing objects, in ascending order.
-  std::sort(replicas_by_num_missing.begin(), replicas_by_num_missing.end(),
-    [](const std::pair<unsigned int, pg_shard_t> &lhs,
-       const std::pair<unsigned int, pg_shard_t> &rhs) {
-      return lhs.first < rhs.first;
-    }
-  );
+  auto func = [](const std::pair<unsigned int, pg_shard_t> &lhs,
+                 const std::pair<unsigned int, pg_shard_t> &rhs) {
+    return lhs.first < rhs.first;
+  };
+  // acting goes first
+  std::sort(replicas_by_num_missing.begin(), replicas_by_num_missing.end(), func);
+  // then async_recovery_targets
+  std::sort(async_by_num_missing.begin(), async_by_num_missing.end(), func);
+  replicas_by_num_missing.insert(replicas_by_num_missing.end(),
+    async_by_num_missing.begin(), async_by_num_missing.end());
   for (auto &replica: replicas_by_num_missing) {
     pg_shard_t &peer = replica.second;
     assert(peer != get_primary());
@@ -14521,7 +14536,7 @@ void PrimaryLogPG::log_missing(unsigned missing,
                << " skipped " << missing << " clone(s) in cache tier" << dendl;
   } else {
     clog->info() << mode << " " << pgid << " " << head.get()
-		       << " " << missing << " missing clone(s)";
+		       << " : " << missing << " missing clone(s)";
   }
 }
 
@@ -14548,7 +14563,7 @@ unsigned PrimaryLogPG::process_clones_to(const boost::optional<hobject_t> &head,
     if (!allow_incomplete_clones) {
       next_clone.snap = **curclone;
       clog->error() << mode << " " << pgid << " " << head.get()
-			 << " expected clone " << next_clone << " " << missing
+			 << " : expected clone " << next_clone << " " << missing
                          << " missing";
       ++scrubber.shallow_errors;
       e.set_clone_missing(next_clone.snap);
@@ -14627,7 +14642,7 @@ void PrimaryLogPG::scrub_snapshot_metadata(
     if (p->second.attrs.count(OI_ATTR) == 0) {
       oi = boost::none;
       osd->clog->error() << mode << " " << info.pgid << " " << soid
-			<< " no '" << OI_ATTR << "' attr";
+			<< " : no '" << OI_ATTR << "' attr";
       ++scrubber.shallow_errors;
       soid_error.set_info_missing();
     } else {
@@ -14639,7 +14654,7 @@ void PrimaryLogPG::scrub_snapshot_metadata(
       } catch (buffer::error& e) {
 	oi = boost::none;
 	osd->clog->error() << mode << " " << info.pgid << " " << soid
-		<< " can't decode '" << OI_ATTR << "' attr " << e.what();
+		<< " : can't decode '" << OI_ATTR << "' attr " << e.what();
 	++scrubber.shallow_errors;
 	soid_error.set_info_corrupted();
         soid_error.set_info_missing(); // Not available too
@@ -14649,7 +14664,7 @@ void PrimaryLogPG::scrub_snapshot_metadata(
     if (oi) {
       if (pgbackend->be_get_ondisk_size(oi->size) != p->second.size) {
 	osd->clog->error() << mode << " " << info.pgid << " " << soid
-			   << " on disk size (" << p->second.size
+			   << " : on disk size (" << p->second.size
 			   << ") does not match object info size ("
 			   << oi->size << ") adjusted for ondisk to ("
 			   << pgbackend->be_get_ondisk_size(oi->size)
@@ -14717,10 +14732,10 @@ void PrimaryLogPG::scrub_snapshot_metadata(
       // If we couldn't read the head's snapset, just ignore clones
       if (head && !snapset) {
 	osd->clog->error() << mode << " " << info.pgid << " " << soid
-			  << " clone ignored due to missing snapset";
+			  << " : clone ignored due to missing snapset";
       } else {
 	osd->clog->error() << mode << " " << info.pgid << " " << soid
-			   << " is an unexpected clone";
+			   << " : is an unexpected clone";
       }
       ++scrubber.shallow_errors;
       soid_error.set_headless();
@@ -14752,7 +14767,7 @@ void PrimaryLogPG::scrub_snapshot_metadata(
 
       if (p->second.attrs.count(SS_ATTR) == 0) {
 	osd->clog->error() << mode << " " << info.pgid << " " << soid
-			  << " no '" << SS_ATTR << "' attr";
+			  << " : no '" << SS_ATTR << "' attr";
         ++scrubber.shallow_errors;
 	snapset = boost::none;
 	head_error.set_snapset_missing();
@@ -14767,7 +14782,7 @@ void PrimaryLogPG::scrub_snapshot_metadata(
         } catch (buffer::error& e) {
 	  snapset = boost::none;
           osd->clog->error() << mode << " " << info.pgid << " " << soid
-		<< " can't decode '" << SS_ATTR << "' attr " << e.what();
+		<< " : can't decode '" << SS_ATTR << "' attr " << e.what();
 	  ++scrubber.shallow_errors;
 	  head_error.set_snapset_corrupted();
         }
@@ -14781,7 +14796,7 @@ void PrimaryLogPG::scrub_snapshot_metadata(
 	  dout(20) << "  snapset " << snapset.get() << dendl;
 	  if (snapset->seq == 0) {
 	    osd->clog->error() << mode << " " << info.pgid << " " << soid
-			       << " snaps.seq not set";
+			       << " : snaps.seq not set";
 	    ++scrubber.shallow_errors;
 	    head_error.set_snapset_error();
           }
@@ -14797,13 +14812,13 @@ void PrimaryLogPG::scrub_snapshot_metadata(
 
       if (snapset->clone_size.count(soid.snap) == 0) {
 	osd->clog->error() << mode << " " << info.pgid << " " << soid
-			   << " is missing in clone_size";
+			   << " : is missing in clone_size";
 	++scrubber.shallow_errors;
 	soid_error.set_size_mismatch();
       } else {
         if (oi && oi->size != snapset->clone_size[soid.snap]) {
 	  osd->clog->error() << mode << " " << info.pgid << " " << soid
-			     << " size " << oi->size << " != clone_size "
+			     << " : size " << oi->size << " != clone_size "
 			     << snapset->clone_size[*curclone];
 	  ++scrubber.shallow_errors;
 	  soid_error.set_size_mismatch();
@@ -14811,7 +14826,7 @@ void PrimaryLogPG::scrub_snapshot_metadata(
 
         if (snapset->clone_overlap.count(soid.snap) == 0) {
 	  osd->clog->error() << mode << " " << info.pgid << " " << soid
-			     << " is missing in clone_overlap";
+			     << " : is missing in clone_overlap";
 	  ++scrubber.shallow_errors;
 	  soid_error.set_size_mismatch();
 	} else {
@@ -14834,7 +14849,7 @@ void PrimaryLogPG::scrub_snapshot_metadata(
 
 	  if (bad_interval_set) {
 	    osd->clog->error() << mode << " " << info.pgid << " " << soid
-			       << " bad interval_set in clone_overlap";
+			       << " : bad interval_set in clone_overlap";
 	    ++scrubber.shallow_errors;
 	    soid_error.set_size_mismatch();
 	  } else {
@@ -14882,8 +14897,8 @@ void PrimaryLogPG::scrub_snapshot_metadata(
       continue;
     } else if (obc->obs.oi.soid != p->first) {
       osd->clog->error() << info.pgid << " " << mode
-			 << " object " << p->first
-			 << " has a valid oi attr with a mismatched name, "
+			 << " " << p->first
+			 << " : object has a valid oi attr with a mismatched name, "
 			 << " obc->obs.oi.soid: " << obc->obs.oi.soid;
       continue;
     }
@@ -14965,7 +14980,7 @@ void PrimaryLogPG::_scrub_finish()
       scrub_cstat.sum.num_whiteouts != info.stats.stats.sum.num_whiteouts ||
       scrub_cstat.sum.num_bytes != info.stats.stats.sum.num_bytes) {
     osd->clog->error() << info.pgid << " " << mode
-		      << " stat mismatch, got "
+		      << " : stat mismatch, got "
 		      << scrub_cstat.sum.num_objects << "/" << info.stats.stats.sum.num_objects << " objects, "
 		      << scrub_cstat.sum.num_object_clones << "/" << info.stats.stats.sum.num_object_clones << " clones, "
 		      << scrub_cstat.sum.num_objects_dirty << "/" << info.stats.stats.sum.num_objects_dirty << " dirty, "
@@ -15001,8 +15016,9 @@ bool PrimaryLogPG::check_osdmap_full(const set<pg_shard_t> &missing_on)
     return osd->check_osdmap_full(missing_on);
 }
 
-int PrimaryLogPG::rep_repair_primary_object(const hobject_t& soid, OpRequestRef op)
+int PrimaryLogPG::rep_repair_primary_object(const hobject_t& soid, OpContext *ctx)
 {
+  OpRequestRef op = ctx->op;
   // Only supports replicated pools
   assert(!pool.info.is_erasure());
   assert(is_primary());
@@ -15016,23 +15032,8 @@ int PrimaryLogPG::rep_repair_primary_object(const hobject_t& soid, OpRequestRef 
   }
 
   assert(!pg_log.get_missing().is_missing(soid));
-  bufferlist bv;
-  object_info_t oi;
-  eversion_t v;
-  int r = get_pgbackend()->objects_get_attr(soid, OI_ATTR, &bv);
-  if (r < 0) {
-    // Leave v and try to repair without a version, getting attr failed
-    dout(0) << __func__ << ": Need version of replica, objects_get_attr failed: "
-	    << soid << " error=" << r << dendl;
-  } else try {
-    auto bliter = bv.cbegin();
-    decode(oi, bliter);
-    v = oi.version;
-  } catch (...) {
-    // Leave v as default constructed. This will fail when sent to older OSDs, but
-    // not much worse than failing here.
-    dout(0) << __func__ << ": Need version of replica, bad object_info_t: " << soid << dendl;
-  }
+  auto& oi = ctx->new_obs.oi;
+  eversion_t v = oi.version;
 
   missing_loc.add_missing(soid, v, eversion_t());
   if (primary_error(soid, v)) {

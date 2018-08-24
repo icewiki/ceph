@@ -3,49 +3,59 @@
 #pragma once
 
 #include "lock_policy.h"
-#include "Mutex.h"
+#ifdef NDEBUG
+#include <mutex>
+#else
+#include "mutex_debug.h"
+#endif
 
-class SharedLRUTest;
-
-namespace ceph::internal {
-
-template<LockPolicy lp> class LockCond;
+namespace ceph {
 
 // empty helper class except when the template argument is LockPolicy::MUTEX
 template<LockPolicy lp>
 class LockMutex {
+  struct Dummy {
+    void lock() {}
+    bool try_lock() {
+      return true;
+    }
+    void unlock() {}
+    bool is_locked() const {
+      return true;
+    }
+  };
 public:
+  using type = Dummy;
+  // discard the constructor params
   template<typename... Args>
-  LockMutex(Args&& ...) {}
-  auto operator()() const {
-    struct Locker {};
-    return Locker{};
-  }
-  bool is_locked() const {
-    return true;
+  static Dummy create(Args&& ...) {
+    return Dummy{};
   }
 };
 
+#ifdef NDEBUG
 template<>
 class LockMutex<LockPolicy::MUTEX> {
 public:
+  using type = std::mutex;
+  // discard the constructor params
   template<typename... Args>
-  LockMutex(Args&& ...args)
-    : mutex{std::forward<Args>(args)...}
-  {}
-  auto operator()() const {
-    return Mutex::Locker{mutex};
+  static std::mutex create(Args&& ...) {
+    return std::mutex{};
   }
-  bool is_locked() const {
-    return mutex.is_locked();
-  }
-private:
-  Mutex& get() {
-    return mutex;
-  }
-  mutable Mutex mutex;
-  friend class LockCond<LockPolicy::MUTEX>;
-  friend class ::SharedLRUTest;
 };
+#else
+template<>
+class LockMutex<LockPolicy::MUTEX> {
+public:
+  using type = ceph::mutex_debug;
+  template<typename... Args>
+  static ceph::mutex_debug create(Args&& ...args) {
+    return ceph::mutex_debug{std::forward<Args>(args)...};
+  }
+};
+#endif	// NDEBUG
 
-} // namespace ceph::internal
+template<LockPolicy lp> using LockMutexT = typename LockMutex<lp>::type;
+
+} // namespace ceph

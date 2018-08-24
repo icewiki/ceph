@@ -8,6 +8,7 @@ import { DeletionModalComponent } from '../../../shared/components/deletion-moda
 import { TableComponent } from '../../../shared/datatable/table/table.component';
 import { CellTemplate } from '../../../shared/enum/cell-template.enum';
 import { CdTableColumn } from '../../../shared/models/cd-table-column';
+import { CdTableFetchDataContext } from '../../../shared/models/cd-table-fetch-data-context';
 import { CdTableSelection } from '../../../shared/models/cd-table-selection';
 import { Permission } from '../../../shared/models/permissions';
 import { AuthStorageService } from '../../../shared/services/auth-storage.service';
@@ -18,7 +19,8 @@ import { AuthStorageService } from '../../../shared/services/auth-storage.servic
   styleUrls: ['./rgw-user-list.component.scss']
 })
 export class RgwUserListComponent {
-  @ViewChild(TableComponent) table: TableComponent;
+  @ViewChild(TableComponent)
+  table: TableComponent;
 
   permission: Permission;
   columns: CdTableColumn[] = [];
@@ -61,15 +63,13 @@ export class RgwUserListComponent {
     ];
   }
 
-  getUserList() {
+  getUserList(context: CdTableFetchDataContext) {
     this.rgwUserService.list().subscribe(
       (resp: object[]) => {
         this.users = resp;
       },
       () => {
-        // Force datatable to hide the loading indicator in
-        // case of an error.
-        this.users = [];
+        context.error();
       }
     );
   }

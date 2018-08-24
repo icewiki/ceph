@@ -906,9 +906,15 @@ WRITE_CLASS_ENCODER_FEATURES(objectstore_perf_stat_t)
  * aggregate stats for an osd
  */
 struct osd_stat_t {
-  int64_t kb, kb_used, kb_avail;
+  int64_t kb = 0;            ///< total device size
+  int64_t kb_used = 0;       ///< total used
+  int64_t kb_used_data = 0;  ///< total used by object data
+  int64_t kb_used_omap = 0;  ///< total used by omap data
+  int64_t kb_used_meta = 0;  ///< total used by internal metadata
+  int64_t kb_avail = 0;      ///< total available/free
+
   vector<int> hb_peers;
-  int32_t snap_trim_queue_len, num_snap_trimming;
+  int32_t snap_trim_queue_len = 0, num_snap_trimming = 0;
 
   pow2_hist_t op_queue_age_hist;
 
@@ -919,12 +925,12 @@ struct osd_stat_t {
 
   uint32_t num_pgs = 0;
 
-  osd_stat_t() : kb(0), kb_used(0), kb_avail(0),
-		 snap_trim_queue_len(0), num_snap_trimming(0) {}
-
   void add(const osd_stat_t& o) {
     kb += o.kb;
     kb_used += o.kb_used;
+    kb_used_data += o.kb_used_data;
+    kb_used_omap += o.kb_used_omap;
+    kb_used_meta += o.kb_used_meta;
     kb_avail += o.kb_avail;
     snap_trim_queue_len += o.snap_trim_queue_len;
     num_snap_trimming += o.num_snap_trimming;
@@ -935,6 +941,9 @@ struct osd_stat_t {
   void sub(const osd_stat_t& o) {
     kb -= o.kb;
     kb_used -= o.kb_used;
+    kb_used_data -= o.kb_used_data;
+    kb_used_omap -= o.kb_used_omap;
+    kb_used_meta -= o.kb_used_meta;
     kb_avail -= o.kb_avail;
     snap_trim_queue_len -= o.snap_trim_queue_len;
     num_snap_trimming -= o.num_snap_trimming;
@@ -953,6 +962,9 @@ WRITE_CLASS_ENCODER_FEATURES(osd_stat_t)
 inline bool operator==(const osd_stat_t& l, const osd_stat_t& r) {
   return l.kb == r.kb &&
     l.kb_used == r.kb_used &&
+    l.kb_used_data == r.kb_used_data &&
+    l.kb_used_omap == r.kb_used_omap &&
+    l.kb_used_meta == r.kb_used_meta &&
     l.kb_avail == r.kb_avail &&
     l.snap_trim_queue_len == r.snap_trim_queue_len &&
     l.num_snap_trimming == r.num_snap_trimming &&
@@ -965,10 +977,12 @@ inline bool operator!=(const osd_stat_t& l, const osd_stat_t& r) {
   return !(l == r);
 }
 
-
-
 inline ostream& operator<<(ostream& out, const osd_stat_t& s) {
-  return out << "osd_stat(" << byte_u_t(s.kb_used << 10) << " used, "
+  return out << "osd_stat("
+	     << byte_u_t(s.kb_used << 10) << " used ("
+	     << byte_u_t(s.kb_used_data << 10) << " data, "
+	     << byte_u_t(s.kb_used_omap << 10) << " omap, "
+	     << byte_u_t(s.kb_used_meta << 10) << " meta), "
 	     << byte_u_t(s.kb_avail << 10) << " avail, "
 	     << byte_u_t(s.kb << 10) << " total, "
 	     << "peers " << s.hb_peers
@@ -2672,7 +2686,6 @@ public:
     virtual void decode(bufferlist::const_iterator &bl) = 0;
     virtual void dump(Formatter *f) const = 0;
     virtual void iterate_mayberw_back_to(
-      bool ec_pool,
       epoch_t les,
       std::function<void(epoch_t, const set<pg_shard_t> &)> &&f) const = 0;
 
@@ -2787,11 +2800,10 @@ public:
 
   template <typename F>
   void iterate_mayberw_back_to(
-    bool ec_pool,
     epoch_t les,
     F &&f) const {
     assert(past_intervals);
-    past_intervals->iterate_mayberw_back_to(ec_pool, les, std::forward<F>(f));
+    past_intervals->iterate_mayberw_back_to(les, std::forward<F>(f));
   }
   void clear() {
     assert(past_intervals);
@@ -3006,7 +3018,6 @@ PastIntervals::PriorSet::PriorSet(
   }
 
   past_intervals.iterate_mayberw_back_to(
-    ec_pool,
     last_epoch_started,
     [&](epoch_t start, const set<pg_shard_t> &acting) {
       ldpp_dout(dpp, 10) << "build_prior maybe_rw interval:" << start
@@ -5335,14 +5346,18 @@ struct PromoteCounter {
  */
 struct store_statfs_t
 {
-  uint64_t total = 0;                  // Total bytes
-  uint64_t available = 0;              // Free bytes available
+  uint64_t total = 0;                  ///< Total bytes
+  uint64_t available = 0;              ///< Free bytes available
 
-  int64_t allocated = 0;               // Bytes allocated by the store
-  int64_t stored = 0;                  // Bytes actually stored by the user
-  int64_t compressed = 0;              // Bytes stored after compression
-  int64_t compressed_allocated = 0;    // Bytes allocated for compressed data
-  int64_t compressed_original = 0;     // Bytes that were successfully compressed
+  int64_t allocated = 0;               ///< Bytes allocated by the store
+
+  int64_t data_stored = 0;                ///< Bytes actually stored by the user
+  int64_t data_compressed = 0;            ///< Bytes stored after compression
+  int64_t data_compressed_allocated = 0;  ///< Bytes allocated for compressed data
+  int64_t data_compressed_original = 0;   ///< Bytes that were compressed
+
+  int64_t omap_allocated = 0;         ///< approx usage of omap data
+  int64_t internal_metadata = 0;      ///< approx usage of internal metadata
 
   void reset() {
     *this = store_statfs_t();

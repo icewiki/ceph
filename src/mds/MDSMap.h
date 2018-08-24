@@ -26,7 +26,6 @@
 
 #include "include/types.h"
 #include "common/Clock.h"
-#include "msg/Message.h"
 #include "include/health.h"
 
 #include "common/config.h"
@@ -35,29 +34,6 @@
 #include "include/ceph_features.h"
 #include "common/Formatter.h"
 #include "mds/mdstypes.h"
-
-/*
-
- boot  --> standby, creating, or starting.
-
-
- dne  ---->   creating  ----->   active*
- ^ ^___________/                /  ^ ^
- |                             /  /  |
- destroying                   /  /   |
-   ^                         /  /    |
-   |                        /  /     |
- stopped <---- stopping* <-/  /      |
-      \                      /       |
-        ----- starting* ----/        |
-                                     |
- failed                              |
-    \                                |
-     \--> replay*  --> reconnect* --> rejoin*
-
-     * = can fail
-
-*/
 
 class CephContext;
 class health_check_map_t;
@@ -78,7 +54,11 @@ class health_check_map_t;
 class MDSMap {
 public:
   /* These states are the union of the set of possible states of an MDS daemon,
-   * and the set of possible states of an MDS rank */
+   * and the set of possible states of an MDS rank. See
+   * doc/cephfs/mds-states.rst for state descriptions,
+   * doc/cephfs/mds-state-diagram.svg for a visual state diagram, and
+   * doc/cephfs/mds-state-diagram.dot to update mds-state-diagram.svg.
+   */
   typedef enum {
     // States of an MDS daemon not currently holding a rank
     // ====================================================
@@ -624,9 +604,8 @@ public:
    * Get the MDS daemon entity_inst_t for a rank
    * known to be up.
    */
-  entity_addrvec_t get_addrs(mds_rank_t m) {
-    assert(up.count(m));
-    return mds_info[up[m]].get_addrs();
+  entity_addrvec_t get_addrs(mds_rank_t m) const {
+    return mds_info.at(up.at(m)).get_addrs();
   }
 
   mds_rank_t get_rank_gid(mds_gid_t gid) const {
@@ -645,7 +624,7 @@ public:
   }
   void encode(bufferlist& bl, uint64_t features) const;
   void decode(bufferlist::const_iterator& p);
-  void decode(bufferlist& bl) {
+  void decode(const bufferlist& bl) {
     auto p = bl.cbegin();
     decode(p);
   }

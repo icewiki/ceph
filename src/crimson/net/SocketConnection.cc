@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <seastar/core/shared_future.hh>
 #include <seastar/core/sleep.hh>
+#include <seastar/net/packet.hh>
 
 #include "Config.h"
 #include "Messenger.h"
@@ -242,7 +243,7 @@ seastar::future<MessageRef> SocketConnection::read_message()
 bool SocketConnection::update_rx_seq(seq_num_t seq)
 {
   if (seq <= in_seq) {
-    if (has_feature(CEPH_FEATURE_RECONNECT_SEQ) &&
+    if (HAVE_FEATURE(features, RECONNECT_SEQ) &&
         conf.ms_die_on_old_message) {
       assert(0 == "old msgs despite reconnect_seq feature");
     }
@@ -270,7 +271,7 @@ seastar::future<> SocketConnection::write_message(MessageRef msg)
   bl.append(msg->get_middle());
   bl.append(msg->get_data());
   auto& footer = msg->get_footer();
-  if (has_feature(CEPH_FEATURE_MSG_AUTH)) {
+  if (HAVE_FEATURE(features, MSG_AUTH)) {
     bl.append((const char*)&footer, sizeof(footer));
   } else {
     ceph_msg_footer_old old_footer;
@@ -312,10 +313,31 @@ seastar::future<> SocketConnection::send(MessageRef msg)
   return f.get_future();
 }
 
+seastar::future<> SocketConnection::keepalive()
+{
+  seastar::shared_future<> f = send_ready.then([this] {
+      k.req.stamp = ceph::coarse_real_clock::to_ceph_timespec(
+        ceph::coarse_real_clock::now());
+      seastar::net::packet msg{reinterpret_cast<const char*>(&k.req),
+                               sizeof(k.req)};
+      return out.write(std::move(msg));
+    }).then([this] {
+      return out.flush();
+    });
+  send_ready = f.get_future();
+  return f.get_future();
+}
+
 seastar::future<> SocketConnection::close()
 {
+  // unregister_conn() drops a reference, so hold another until completion
+  auto cleanup = [conn = ConnectionRef(this)] {};
+
   get_messenger()->unregister_conn(this);
-  return seastar::when_all(in.close(), out.close()).discard_result();
+
+  return seastar::when_all(in.close(), out.close())
+    .discard_result()
+    .finally(std::move(cleanup));
 }
 
 // handshake
@@ -454,6 +476,7 @@ seastar::future<> SocketConnection::handle_connect()
       						h.connect.authorizer_protocol,
       						authorizer);
     }).then([this] (ceph::net::msgr_tag_t tag, bufferlist&& authorizer_reply) {
+      memset(&h.reply, 0, sizeof(h.reply));
       if (tag) {
 	return send_connect_reply(tag, std::move(authorizer_reply));
       }
@@ -465,7 +488,7 @@ seastar::future<> SocketConnection::handle_connect()
       }
       h.connect_seq = h.connect.connect_seq + 1;
       h.peer_global_seq = h.connect.global_seq;
-      set_features((uint64_t)h.reply.features & (uint64_t)h.connect.features);
+      set_features((uint64_t)policy.features_supported & (uint64_t)h.connect.features);
       // TODO: cct
       return send_connect_reply_ready(CEPH_MSGR_TAG_READY, std::move(authorizer_reply));
     });
@@ -482,7 +505,7 @@ SocketConnection::send_connect_reply(msgr_tag_t tag,
   h.reply.authorizer_len = authorizer_reply.length();
   return out.write(reinterpret_cast<const char*>(&h.reply), sizeof(h.reply))
     .then([this, reply=std::move(authorizer_reply)]() mutable {
-      out.write(std::move(reply));
+      return out.write(std::move(reply));
     }).then([this] {
       return out.flush();
     });
@@ -532,14 +555,11 @@ SocketConnection::handle_keepalive2()
 {
   return in.read_exactly(sizeof(ceph_timespec))
     .then([this] (auto buf) {
-      auto t = reinterpret_cast<const ceph_timespec*>(buf.get());
-      k.reply_stamp = *t;
-      std::cout << "keepalive2 " << t->tv_sec << std::endl;
-      char tag = CEPH_MSGR_TAG_KEEPALIVE2_ACK;
-      return out.write(reinterpret_cast<const char*>(&tag), sizeof(tag));
-    }).then([this] {
-      out.write(reinterpret_cast<const char*>(&k.reply_stamp),
-                sizeof(k.reply_stamp));
+      k.ack.stamp = *reinterpret_cast<const ceph_timespec*>(buf.get());
+      std::cout << "keepalive2 " << k.ack.stamp.tv_sec << std::endl;
+      seastar::net::packet msg{reinterpret_cast<const char*>(&k.ack),
+                               sizeof(k.ack)};
+      return out.write(std::move(msg));
     }).then([this] {
       return out.flush();
     });
@@ -603,7 +623,8 @@ seastar::future<> SocketConnection::replace_existing(ConnectionRef existing,
 						     bool is_reset_from_peer)
 {
   msgr_tag_t reply_tag;
-  if ((h.connect.features & CEPH_FEATURE_RECONNECT_SEQ) && !is_reset_from_peer) {
+  if (HAVE_FEATURE(h.connect.features, RECONNECT_SEQ) &&
+      !is_reset_from_peer) {
     reply_tag = CEPH_MSGR_TAG_SEQ;
   } else {
     reply_tag = CEPH_MSGR_TAG_READY;
@@ -701,7 +722,7 @@ void SocketConnection::reset_session()
   decltype(sent){}.swap(sent);
   in_seq = 0;
   h.connect_seq = 0;
-  if (has_feature(CEPH_FEATURE_MSG_AUTH)) {
+  if (HAVE_FEATURE(features, MSG_AUTH)) {
     // Set out_seq to a random value, so CRC won't be predictable.
     // Constant to limit starting sequence number to 2^31.  Nothing special
     // about it, just a big number.
@@ -791,9 +812,8 @@ seastar::future<> SocketConnection::client_handshake(entity_type_t peer_type,
       ::encode(my_addr, bl, 0);
       return out.write(std::move(bl)).then([this] { return out.flush(); });
     }).then([=] {
-      }).then([=] {
-        return seastar::do_until([=] { return state == state_t::open; },
-                                 [=] { return connect(peer_type, host_type); });
+      return seastar::do_until([=] { return state == state_t::open; },
+                               [=] { return connect(peer_type, host_type); });
     }).then([this] {
       // start background processing of tags
       read_tags_until_next_message();

@@ -2,6 +2,7 @@
 from __future__ import absolute_import
 
 import re
+from distutils.util import strtobool
 from ..awsauth import S3Auth
 from ..settings import Settings, Options
 from ..rest_client import RestClient, RequestException
@@ -170,12 +171,13 @@ class RgwClient(RestClient):
         port = port if port else RgwClient._port
         admin_path = admin_path if admin_path else RgwClient._ADMIN_PATH
         ssl = ssl if ssl else RgwClient._ssl
+        ssl_verify = Settings.RGW_API_SSL_VERIFY
 
         self.service_url = build_url(host=host, port=port)
         self.admin_path = admin_path
 
         s3auth = S3Auth(access_key, secret_key, service_url=self.service_url)
-        super(RgwClient, self).__init__(host, port, 'RGW', ssl, s3auth)
+        super(RgwClient, self).__init__(host, port, 'RGW', ssl, s3auth, ssl_verify=ssl_verify)
 
         # If user ID is not set, then try to get it via the RGW Admin Ops API.
         self.userid = userid if userid else self._get_user_id(self.admin_path)
@@ -206,13 +208,23 @@ class RgwClient(RestClient):
         return response['data']['user_id']
 
     @RestClient.api_get('/{admin_path}/metadata/user', resp_structure='[+]')
-    def _is_system_user(self, admin_path, request=None):
+    def _user_exists(self, admin_path, request=None):
         # pylint: disable=unused-argument
         response = request()
         return self.userid in response
 
+    def user_exists(self):
+        return self._user_exists(self.admin_path)
+
+    @RestClient.api_get('/{admin_path}/metadata/user?key={userid}',
+                        resp_structure='data > system')
+    def _is_system_user(self, admin_path, userid, request=None):
+        # pylint: disable=unused-argument
+        response = request()
+        return strtobool(response['data']['system'])
+
     def is_system_user(self):
-        return self._is_system_user(self.admin_path)
+        return self._is_system_user(self.admin_path, self.userid)
 
     @RestClient.api_get(
         '/{admin_path}/user',

@@ -230,36 +230,20 @@ vinodeno_t Client::map_faked_ino(ino_t ino)
 
 Client::Client(Messenger *m, MonClient *mc, Objecter *objecter_)
   : Dispatcher(m->cct),
-    m_command_hook(this),
     timer(m->cct, client_lock),
-    callback_handle(NULL),
-    switch_interrupt_cb(NULL),
-    remount_cb(NULL),
-    ino_invalidate_cb(NULL),
-    dentry_invalidate_cb(NULL),
-    umask_cb(NULL),
-    can_invalidate_dentries(false),
+    client_lock("Client::client_lock"),
+    messenger(m),
+    monclient(mc),
+    objecter(objecter_),
+    whoami(mc->get_global_id()),
     async_ino_invalidator(m->cct),
     async_dentry_invalidator(m->cct),
     interrupt_finisher(m->cct),
     remount_finisher(m->cct),
     objecter_finisher(m->cct),
-    tick_event(NULL),
-    messenger(m), monclient(mc),
-    objecter(objecter_),
-    whoami(mc->get_global_id()), cap_epoch_barrier(0),
-    last_tid(0), oldest_tid(0), last_flush_tid(1),
-    local_osd(-ENXIO), local_osd_epoch(0),
-    unsafe_sync_write(0),
-    client_lock("Client::client_lock"),
-    deleg_timeout(0)
+    m_command_hook(this)
 {
   _reset_faked_inos();
-  //
-  root = 0;
-  root_ancestor = 0;
-
-  num_flushing_caps = 0;
 
   _dir_vxattrs_name_size = _vxattrs_calcu_name_size(_dir_vxattrs);
   _file_vxattrs_name_size = _vxattrs_calcu_name_size(_file_vxattrs);
@@ -267,7 +251,6 @@ Client::Client(Messenger *m, MonClient *mc, Objecter *objecter_)
   user_id = cct->_conf->client_mount_uid;
   group_id = cct->_conf->client_mount_gid;
 
-  acl_type = NO_ACL;
   if (cct->_conf->client_acl_type == "posix_acl")
     acl_type = POSIX_ACL;
 
@@ -1068,7 +1051,13 @@ void Client::insert_readdir_results(MetaRequest *request, MetaSession *session, 
 
   MClientReply *reply = request->reply;
   ConnectionRef con = request->reply->get_connection();
-  uint64_t features = con->get_features();
+  uint64_t features;
+  if(session->mds_features.test(CEPHFS_FEATURE_REPLY_ENCODING)) {
+    features = (uint64_t)-1;
+  }
+  else {
+    features = con->get_features();
+  }
 
   dir_result_t *dirp = request->dirp;
   assert(dirp);
@@ -1087,7 +1076,7 @@ void Client::insert_readdir_results(MetaRequest *request, MetaSession *session, 
     assert(dir);
 
     // dirstat
-    DirStat dst(p);
+    DirStat dst(p, features);
     __u32 numdn;
     __u16 flags;
     decode(numdn, p);
@@ -1145,7 +1134,7 @@ void Client::insert_readdir_results(MetaRequest *request, MetaSession *session, 
     LeaseStat dlease;
     for (unsigned i=0; i<numdn; i++) {
       decode(dname, p);
-      decode(dlease, p);
+      dlease.decode(p, features);
       InodeStat ist(p, features);
 
       ldout(cct, 15) << "" << i << ": '" << dname << "'" << dendl;
@@ -1266,7 +1255,13 @@ Inode* Client::insert_trace(MetaRequest *request, MetaSession *session)
   }
 
   ConnectionRef con = request->reply->get_connection();
-  uint64_t features = con->get_features();
+  uint64_t features;
+  if (session->mds_features.test(CEPHFS_FEATURE_REPLY_ENCODING)) {
+    features = (uint64_t)-1;
+  }
+  else {
+    features = con->get_features();
+  }
   ldout(cct, 10) << " features 0x" << hex << features << dec << dendl;
 
   // snap trace
@@ -1287,9 +1282,9 @@ Inode* Client::insert_trace(MetaRequest *request, MetaSession *session)
 
   if (reply->head.is_dentry) {
     dirst.decode(p, features);
-    dst.decode(p);
+    dst.decode(p, features);
     decode(dname, p);
-    decode(dlease, p);
+    dlease.decode(p, features);
   }
 
   Inode *in = 0;
@@ -1460,6 +1455,10 @@ mds_rank_t Client::choose_target_mds(MetaRequest *req, Inode** phash_diri)
 	mds = in->fragmap[fg];
 	if (phash_diri)
 	  *phash_diri = in;
+      } else if (in->auth_cap) {
+	mds = in->auth_cap->session->mds_num;
+      }
+      if (mds >= 0) {
 	ldout(cct, 10) << __func__ << " from dirfragtree hash" << dendl;
 	goto out;
       }
@@ -2021,10 +2020,10 @@ MetaSession *Client::_open_mds_session(mds_rank_t mds)
     }
   }
 
-  MClientSession *m = new MClientSession(CEPH_SESSION_REQUEST_OPEN);
+  auto m = MClientSession::create(CEPH_SESSION_REQUEST_OPEN);
   m->metadata = metadata;
   m->supported_features = feature_bitset_t(CEPHFS_FEATURES_CLIENT_SUPPORTED);
-  session->con->send_message(m);
+  session->con->send_message2(m);
   return session;
 }
 
@@ -2032,7 +2031,7 @@ void Client::_close_mds_session(MetaSession *s)
 {
   ldout(cct, 2) << __func__ << " mds." << s->mds_num << " seq " << s->seq << dendl;
   s->state = MetaSession::STATE_CLOSING;
-  s->con->send_message(new MClientSession(CEPH_SESSION_REQUEST_CLOSE, s->seq));
+  s->con->send_message2(MClientSession::create(CEPH_SESSION_REQUEST_CLOSE, s->seq));
 }
 
 void Client::_closed_mds_session(MetaSession *s)
@@ -2072,6 +2071,7 @@ void Client::handle_client_session(MClientSession *m)
 	_closed_mds_session(session);
 	break;
       }
+      session->mds_features = std::move(m->supported_features);
 
       renew_caps(session);
       session->state = MetaSession::STATE_OPEN;
@@ -2108,7 +2108,7 @@ void Client::handle_client_session(MClientSession *m)
     break;
 
   case CEPH_SESSION_FLUSHMSG:
-    session->con->send_message(new MClientSession(CEPH_SESSION_FLUSHMSG_ACK, m->get_seq()));
+    session->con->send_message2(MClientSession::create(CEPH_SESSION_FLUSHMSG_ACK, m->get_seq()));
     break;
 
   case CEPH_SESSION_FORCE_RO:
@@ -2213,7 +2213,7 @@ void Client::send_request(MetaRequest *request, MetaSession *session,
 
 MClientRequest* Client::build_client_request(MetaRequest *request)
 {
-  MClientRequest *req = new MClientRequest(request->get_op());
+  auto req = MClientRequest::create(request->get_op());
   req->set_tid(request->tid);
   req->set_stamp(request->op_stamp);
   memcpy(&req->head, &request->head, sizeof(ceph_mds_request_head));
@@ -2246,7 +2246,7 @@ MClientRequest* Client::build_client_request(MetaRequest *request)
   const gid_t *_gids;
   int gid_count = request->perms.get_gids(&_gids);
   req->set_gid_list(gid_count, _gids);
-  return req;
+  return req.detach();
 }
 
 
@@ -2887,7 +2887,7 @@ void Client::got_mds_push(MetaSession *s)
   s->seq++;
   ldout(cct, 10) << " mds." << s->mds_num << " seq now " << s->seq << dendl;
   if (s->state == MetaSession::STATE_CLOSING) {
-    s->con->send_message(new MClientSession(CEPH_SESSION_REQUEST_CLOSE, s->seq));
+    s->con->send_message2(MClientSession::create(CEPH_SESSION_REQUEST_CLOSE, s->seq));
   }
 }
 
@@ -2927,10 +2927,10 @@ void Client::handle_lease(MClientLease *m)
   }
 
  revoke:
-  m->get_connection()->send_message(
-    new MClientLease(
-      CEPH_MDS_LEASE_RELEASE, seq,
-      m->get_mask(), m->get_ino(), m->get_first(), m->get_last(), m->dname));
+  {
+    auto reply = MClientLease::create(CEPH_MDS_LEASE_RELEASE, seq, m->get_mask(), m->get_ino(), m->get_first(), m->get_last(), m->dname);
+    m->get_connection()->send_message2(reply);
+  }
   m->put();
 }
 
@@ -3285,7 +3285,7 @@ void Client::send_cap(Inode *in, MetaSession *session, Cap *cap,
   if (flush)
     follows = in->snaprealm->get_snap_context().seq;
   
-  MClientCaps *m = new MClientCaps(op,
+  auto m = MClientCaps::create(op,
 				   in->ino,
 				   0,
 				   cap->cap_id, cap->seq,
@@ -3343,7 +3343,7 @@ void Client::send_cap(Inode *in, MetaSession *session, Cap *cap,
   if (!session->flushing_caps_tids.empty())
     m->set_oldest_flush_tid(*session->flushing_caps_tids.begin());
 
-  session->con->send_message(m);
+  session->con->send_message2(m);
 }
 
 static bool is_max_size_approaching(Inode *in)
@@ -3358,6 +3358,35 @@ static bool is_max_size_approaching(Inode *in)
       (in->size << 1) >= in->max_size + in->reported_size)
     return true;
   return false;
+}
+
+static int adjust_caps_used_for_lazyio(int used, int issued, int implemented)
+{
+  if (!(used & (CEPH_CAP_FILE_CACHE | CEPH_CAP_FILE_BUFFER)))
+    return used;
+  if (!(implemented & CEPH_CAP_FILE_LAZYIO))
+    return used;
+
+  if (issued & CEPH_CAP_FILE_LAZYIO) {
+    if (!(issued & CEPH_CAP_FILE_CACHE)) {
+      used &= ~CEPH_CAP_FILE_CACHE;
+      used |= CEPH_CAP_FILE_LAZYIO;
+    }
+    if (!(issued & CEPH_CAP_FILE_BUFFER)) {
+      used &= ~CEPH_CAP_FILE_BUFFER;
+      used |= CEPH_CAP_FILE_LAZYIO;
+    }
+  } else {
+    if (!(implemented & CEPH_CAP_FILE_CACHE)) {
+      used &= ~CEPH_CAP_FILE_CACHE;
+      used |= CEPH_CAP_FILE_LAZYIO;
+    }
+    if (!(implemented & CEPH_CAP_FILE_BUFFER)) {
+      used &= ~CEPH_CAP_FILE_BUFFER;
+      used |= CEPH_CAP_FILE_LAZYIO;
+    }
+  }
+  return used;
 }
 
 /**
@@ -3386,6 +3415,9 @@ void Client::check_caps(Inode *in, unsigned flags)
   int issued = in->caps_issued(&implemented);
   int revoking = implemented & ~issued;
 
+  int orig_used = used;
+  used = adjust_caps_used_for_lazyio(used, issued, implemented);
+
   int retain = wanted | used | CEPH_CAP_PIN;
   if (!unmounting) {
     if (wanted)
@@ -3408,10 +3440,10 @@ void Client::check_caps(Inode *in, unsigned flags)
   if (in->caps.empty())
     return;   // guard if at end of func
 
-  if ((revoking & (CEPH_CAP_FILE_CACHE | CEPH_CAP_FILE_LAZYIO)) &&
-      (used & CEPH_CAP_FILE_CACHE) && !(used & CEPH_CAP_FILE_BUFFER)) {
+  if (!(orig_used & CEPH_CAP_FILE_BUFFER) &&
+      (revoking & used & (CEPH_CAP_FILE_CACHE | CEPH_CAP_FILE_LAZYIO))) {
     if (_release(in))
-      used &= ~CEPH_CAP_FILE_CACHE;
+      used &= ~(CEPH_CAP_FILE_CACHE | CEPH_CAP_FILE_LAZYIO);
   }
 
   if (!in->cap_snaps.empty())
@@ -3616,7 +3648,7 @@ void Client::flush_snaps(Inode *in, bool all_again)
       session->flushing_caps_tids.insert(capsnap.flush_tid);
     }
 
-    MClientCaps *m = new MClientCaps(CEPH_CAP_OP_FLUSHSNAP, in->ino, in->snaprealm->ino, 0, mseq,
+    auto m = MClientCaps::create(CEPH_CAP_OP_FLUSHSNAP, in->ino, in->snaprealm->ino, 0, mseq,
 				     cap_epoch_barrier);
     m->caller_uid = capsnap.cap_dirtier_uid;
     m->caller_gid = capsnap.cap_dirtier_gid;
@@ -3652,7 +3684,7 @@ void Client::flush_snaps(Inode *in, bool all_again)
     assert(!session->flushing_caps_tids.empty());
     m->set_oldest_flush_tid(*session->flushing_caps_tids.begin());
 
-    session->con->send_message(m);
+    session->con->send_message2(m);
   }
 }
 
@@ -5135,10 +5167,11 @@ void Client::handle_cap_grant(MetaSession *session, Inode *in, Cap *cap, MClient
     else if (revoked & ceph_deleg_caps_for_type(CEPH_DELEGATION_WR))
       in->recall_deleg(true);
 
-    if ((used & revoked & CEPH_CAP_FILE_BUFFER) &&
+    used = adjust_caps_used_for_lazyio(used, cap->issued, cap->implemented);
+    if ((used & revoked & (CEPH_CAP_FILE_BUFFER | CEPH_CAP_FILE_LAZYIO)) &&
 	!_flush(in, new C_Client_FlushComplete(this, in))) {
       // waitin' for flush
-    } else if (revoked & CEPH_CAP_FILE_CACHE) {
+    } else if (used & revoked & (CEPH_CAP_FILE_CACHE | CEPH_CAP_FILE_LAZYIO)) {
       if (_release(in))
 	check = true;
     } else {
@@ -5816,8 +5849,8 @@ void Client::flush_mdlog(MetaSession *session)
   // will crash if they see an unknown CEPH_SESSION_* value in this msg.
   const uint64_t features = session->con->get_features();
   if (HAVE_FEATURE(features, SERVER_LUMINOUS)) {
-    MClientSession *m = new MClientSession(CEPH_SESSION_REQUEST_FLUSH_MDLOG);
-    session->con->send_message(m);
+    auto m = MClientSession::create(CEPH_SESSION_REQUEST_FLUSH_MDLOG);
+    session->con->send_message2(m);
   }
 }
 
@@ -6004,7 +6037,7 @@ void Client::flush_cap_releases()
       if (cct->_conf->client_inject_release_failure) {
         ldout(cct, 20) << __func__ << " injecting failure to send cap release message" << dendl;
       } else {
-        session.con->send_message(session.release);
+        session.con->send_message2(session.release);
       }
       session.release.reset();
     }
@@ -6084,7 +6117,7 @@ void Client::renew_caps(MetaSession *session)
   ldout(cct, 10) << "renew_caps mds." << session->mds_num << dendl;
   session->last_cap_renew_request = ceph_clock_now();
   uint64_t seq = ++session->cap_renew_seq;
-  session->con->send_message(new MClientSession(CEPH_SESSION_REQUEST_RENEWCAPS, seq));
+  session->con->send_message2(MClientSession::create(CEPH_SESSION_REQUEST_RENEWCAPS, seq));
 }
 
 
@@ -8596,9 +8629,11 @@ int Client::_open(Inode *in, int flags, mode_t mode, Fh **fhp,
   }
 
   // use normalized flags to generate cmode
-  int cmode = ceph_flags_to_mode(ceph_flags_sys2wire(flags));
-  if (cmode < 0)
-    return -EINVAL;
+  int cflags = ceph_flags_sys2wire(flags);
+  if (cct->_conf.get_val<bool>("client_force_lazyio"))
+    cflags |= CEPH_O_LAZY;
+
+  int cmode = ceph_flags_to_mode(cflags);
   int want = ceph_caps_for_mode(cmode);
   int result = 0;
 
@@ -8613,7 +8648,7 @@ int Client::_open(Inode *in, int flags, mode_t mode, Fh **fhp,
     filepath path;
     in->make_nosnap_relative_path(path);
     req->set_filepath(path);
-    req->head.args.open.flags = ceph_flags_sys2wire(flags & ~O_CREAT);
+    req->head.args.open.flags = cflags & ~CEPH_O_CREAT;
     req->head.args.open.mode = mode;
     req->head.args.open.pool = -1;
     if (cct->_conf->client_debug_getattr_caps)
@@ -8898,7 +8933,7 @@ int Client::preadv(int fd, const struct iovec *iov, int iovcnt, loff_t offset)
 
 int64_t Client::_read(Fh *f, int64_t offset, uint64_t size, bufferlist *bl)
 {
-  int have = 0;
+  int want, have = 0;
   bool movepos = false;
   std::unique_ptr<C_SaferCond> onuninline;
   int64_t r = 0;
@@ -8925,13 +8960,16 @@ int64_t Client::_read(Fh *f, int64_t offset, uint64_t size, bufferlist *bl)
   }
 
 retry:
-  have = 0;
-  r = get_caps(in, CEPH_CAP_FILE_RD, CEPH_CAP_FILE_CACHE, &have, -1);
+  if (f->mode & CEPH_FILE_MODE_LAZY)
+    want = CEPH_CAP_FILE_CACHE | CEPH_CAP_FILE_LAZYIO;
+  else
+    want = CEPH_CAP_FILE_CACHE;
+  r = get_caps(in, CEPH_CAP_FILE_RD, want, &have, -1);
   if (r < 0) {
     goto done;
   }
   if (f->flags & O_DIRECT)
-    have &= ~CEPH_CAP_FILE_CACHE;
+    have &= ~(CEPH_CAP_FILE_CACHE | CEPH_CAP_FILE_LAZYIO);
 
   if (in->inline_version < CEPH_INLINE_NONE) {
     if (!(have & CEPH_CAP_FILE_CACHE)) {
@@ -8962,7 +9000,8 @@ retry:
   }
 
   if (!conf->client_debug_force_sync_read &&
-      (conf->client_oc && (have & CEPH_CAP_FILE_CACHE))) {
+      conf->client_oc &&
+      (have & (CEPH_CAP_FILE_CACHE | CEPH_CAP_FILE_LAZYIO))) {
 
     if (f->flags & O_RSYNC) {
       _flush_range(in, offset, size);
@@ -9350,9 +9389,12 @@ int64_t Client::_write(Fh *f, int64_t offset, uint64_t size, const char *buf,
 
   utime_t lat;
   uint64_t totalwritten;
-  int have;
-  int r = get_caps(in, CEPH_CAP_FILE_WR|CEPH_CAP_AUTH_SHARED,
-		    CEPH_CAP_FILE_BUFFER, &have, endoff);
+  int want, have;
+  if (f->mode & CEPH_FILE_MODE_LAZY)
+    want = CEPH_CAP_FILE_BUFFER | CEPH_CAP_FILE_LAZYIO;
+  else
+    want = CEPH_CAP_FILE_BUFFER;
+  int r = get_caps(in, CEPH_CAP_FILE_WR|CEPH_CAP_AUTH_SHARED, want, &have, endoff);
   if (r < 0)
     return r;
 
@@ -9369,7 +9411,7 @@ int64_t Client::_write(Fh *f, int64_t offset, uint64_t size, const char *buf,
   }
 
   if (f->flags & O_DIRECT)
-    have &= ~CEPH_CAP_FILE_BUFFER;
+    have &= ~(CEPH_CAP_FILE_BUFFER | CEPH_CAP_FILE_LAZYIO);
 
   ldout(cct, 10) << " snaprealm " << *in->snaprealm << dendl;
 
@@ -9403,7 +9445,8 @@ int64_t Client::_write(Fh *f, int64_t offset, uint64_t size, const char *buf,
     }
   }
 
-  if (cct->_conf->client_oc && (have & CEPH_CAP_FILE_BUFFER)) {
+  if (cct->_conf->client_oc &&
+      (have & (CEPH_CAP_FILE_BUFFER | CEPH_CAP_FILE_LAZYIO))) {
     // do buffered write
     if (!in->oset.dirty_or_tx)
       get_cap_ref(in, CEPH_CAP_FILE_CACHE | CEPH_CAP_FILE_BUFFER);
@@ -10277,6 +10320,48 @@ int64_t Client::drop_caches()
   return objectcacher->release_all();
 }
 
+int Client::_lazyio(Fh *fh, int enable)
+{
+  Inode *in = fh->inode.get();
+  ldout(cct, 20) << __func__ << " " << *in << " " << !!enable << dendl;
+
+  if (!!(fh->mode & CEPH_FILE_MODE_LAZY) == !!enable)
+    return 0;
+
+  int orig_mode = fh->mode;
+  if (enable) {
+    fh->mode |= CEPH_FILE_MODE_LAZY;
+    in->get_open_ref(fh->mode);
+    in->put_open_ref(orig_mode);
+    check_caps(in, CHECK_CAPS_NODELAY);
+  } else {
+    fh->mode &= ~CEPH_FILE_MODE_LAZY;
+    in->get_open_ref(fh->mode);
+    in->put_open_ref(orig_mode);
+    check_caps(in, 0);
+  }
+
+  return 0;
+}
+
+int Client::lazyio(int fd, int enable)
+{
+  Mutex::Locker l(client_lock);
+  Fh *f = get_filehandle(fd);
+  if (!f)
+    return -EBADF;
+
+  return _lazyio(f, enable);
+}
+
+int Client::ll_lazyio(Fh *fh, int enable)
+{
+  Mutex::Locker lock(client_lock);
+  ldout(cct, 3) << __func__ << " " << fh << " " << fh->inode->ino << " " << !!enable << dendl;
+  tout(cct) << __func__ << std::endl;
+
+  return _lazyio(fh, enable);
+}
 
 int Client::lazyio_propogate(int fd, loff_t offset, size_t count)
 {
@@ -11882,9 +11967,11 @@ int Client::_create(Inode *dir, const char *name, int flags, mode_t mode,
   }
 
   // use normalized flags to generate cmode
-  int cmode = ceph_flags_to_mode(ceph_flags_sys2wire(flags));
-  if (cmode < 0)
-    return -EINVAL;
+  int cflags = ceph_flags_sys2wire(flags);
+  if (cct->_conf.get_val<bool>("client_force_lazyio"))
+    cflags |= CEPH_O_LAZY;
+
+  int cmode = ceph_flags_to_mode(cflags);
 
   int64_t pool_id = -1;
   if (data_pool && *data_pool) {
@@ -11903,7 +11990,7 @@ int Client::_create(Inode *dir, const char *name, int flags, mode_t mode,
   path.push_dentry(name);
   req->set_filepath(path);
   req->set_inode(dir);
-  req->head.args.open.flags = ceph_flags_sys2wire(flags | O_CREAT);
+  req->head.args.open.flags = cflags | CEPH_O_CREAT;
 
   req->head.args.open.stripe_unit = stripe_unit;
   req->head.args.open.stripe_count = stripe_count;
@@ -13326,13 +13413,14 @@ int Client::fallocate(int fd, int mode, loff_t offset, loff_t length)
 int Client::ll_release(Fh *fh)
 {
   Mutex::Locker lock(client_lock);
+
+  if (unmounting)
+    return -ENOTCONN;
+
   ldout(cct, 3) << __func__ << " (fh)" << fh << " " << fh->inode->ino << " " <<
     dendl;
   tout(cct) << __func__ << " (fh)" << std::endl;
   tout(cct) << (unsigned long)fh << std::endl;
-
-  if (unmounting)
-    return -ENOTCONN;
 
   if (ll_unclosed_fh_set.count(fh))
     ll_unclosed_fh_set.erase(fh);
@@ -14157,7 +14245,7 @@ int StandaloneClient::init()
   objecter->init();
 
   client_lock.Lock();
-  assert(!initialized);
+  assert(!is_initialized());
 
   messenger->add_dispatcher_tail(objecter);
   messenger->add_dispatcher_tail(this);

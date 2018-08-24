@@ -51,6 +51,7 @@ least one :term:`Ceph Metadata Server` running.
 	:maxdepth: 1
 
 	Add/Remove MDS(s) <add-remove-mds>
+	MDS states <mds-states>
 	MDS failover and standby configuration <standby>
 	MDS Configuration Settings <mds-config-ref>
 	Client Configuration Settings <client-config-ref>
@@ -73,6 +74,7 @@ authentication keyring.
 	Mount CephFS <kernel>
 	Mount CephFS as FUSE <fuse>
 	Mount CephFS in fstab <fstab>
+	Use the CephFS Shell <cephfs-shell>
 	Manpage ceph-fuse <../../man/8/ceph-fuse>
 	Manpage mount.ceph <../../man/8/mount.ceph>
 	Manpage mount.fuse.ceph <../../man/8/mount.fuse.ceph>
@@ -86,6 +88,7 @@ authentication keyring.
     :maxdepth: 1
 
     Deployment best practices <best-practices>
+    MDS States <mds-states>
     Administrative commands <administration>
     Understanding MDS Cache Size Limits <cache-size-limits>
     POSIX compatibility <posix>

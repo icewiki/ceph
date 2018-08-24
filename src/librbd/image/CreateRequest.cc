@@ -36,7 +36,7 @@ int validate_features(CephContext *cct, uint64_t features,
     lderr(cct) << "librbd does not support requested features." << dendl;
     return -ENOSYS;
   }
-  if ((features & RBD_FEATURES_INTERNAL) != 0) {
+  if ((features & RBD_FEATURE_OPERATIONS) != 0) {
     lderr(cct) << "cannot use internally controlled features" << dendl;
     return -EINVAL;
   }
@@ -156,7 +156,7 @@ CreateRequest<I>::CreateRequest(IoCtx &ioctx, const std::string &image_name,
 
   if (image_options.get(RBD_IMAGE_OPTION_STRIPE_UNIT, &m_stripe_unit) != 0 ||
       m_stripe_unit == 0) {
-    m_stripe_unit = m_cct->_conf.get_val<uint64_t>("rbd_default_stripe_unit");
+    m_stripe_unit = m_cct->_conf.get_val<Option::size_t>("rbd_default_stripe_unit");
   }
   if (image_options.get(RBD_IMAGE_OPTION_STRIPE_COUNT, &m_stripe_count) != 0 ||
       m_stripe_count == 0) {
@@ -737,8 +737,9 @@ void CreateRequest<I>::complete(int r) {
   }
 
   m_data_io_ctx.close();
-  m_on_finish->complete(r);
+  auto on_finish = m_on_finish;
   delete this;
+  on_finish->complete(r);
 }
 
 // cleanup

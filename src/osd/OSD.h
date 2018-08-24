@@ -275,7 +275,7 @@ public:
   MonClient   *&monc;
   ClassHandler  *&class_handler;
 
-  md_config_cacher_t<uint64_t> osd_max_object_size;
+  md_config_cacher_t<Option::size_t> osd_max_object_size;
   md_config_cacher_t<bool> osd_skip_data_digest;
 
   void enqueue_back(OpQueueItem&& qi);
@@ -881,10 +881,8 @@ public:
   osd_stat_t osd_stat;
   uint32_t seq = 0;
 
-  void update_osd_stat(vector<int>& hb_peers);
-  osd_stat_t set_osd_stat(const struct store_statfs_t &stbuf,
-                          vector<int>& hb_peers,
-			  int num_pgs);
+  void set_statfs(const struct store_statfs_t &stbuf);
+  osd_stat_t set_osd_stat(vector<int>& hb_peers, int num_pgs);
   osd_stat_t get_osd_stat() {
     Mutex::Locker l(stat_lock);
     ++seq;
@@ -930,9 +928,9 @@ private:
   mutable int64_t injectfull = 0;
   s_names injectfull_state = NONE;
   float get_failsafe_full_ratio();
-  void check_full_status(float ratio);
   bool _check_full(DoutPrefixProvider *dpp, s_names type) const;
 public:
+  void check_full_status(float ratio);
   bool check_failsafe_full(DoutPrefixProvider *dpp) const;
   bool check_full(DoutPrefixProvider *dpp) const;
   bool check_backfill_full(DoutPrefixProvider *dpp) const;
@@ -1237,7 +1235,8 @@ public:
 
 protected:
 
-  static const double OSD_TICK_INTERVAL; // tick interval for tick_timer and tick_timer_without_osd_lock
+  const double OSD_TICK_INTERVAL = { 1.0 };
+  double get_tick_interval() const;
 
   AuthAuthorizeHandlerRegistry *authorize_handler_cluster_registry;
   AuthAuthorizeHandlerRegistry *authorize_handler_service_registry;
@@ -1508,20 +1507,31 @@ private:
     utime_t last_rx_front;  ///< last time we got a ping reply on the front side
     utime_t last_rx_back;   ///< last time we got a ping reply on the back side
     epoch_t epoch;      ///< most recent epoch we wanted this peer
+    /// number of connections we send and receive heartbeat pings/replies
+    static constexpr int HEARTBEAT_MAX_CONN = 2;
+    /// history of inflight pings, arranging by timestamp we sent
+    /// send time -> deadline -> remaining replies
+    map<utime_t, pair<utime_t, int>> ping_history;
 
-    bool is_unhealthy(utime_t cutoff) const {
-      return
-	! ((last_rx_front > cutoff ||
-	    (last_rx_front == utime_t() && (last_tx == utime_t() ||
-					    first_tx > cutoff))) &&
-	   (last_rx_back > cutoff ||
-	    (last_rx_back == utime_t() && (last_tx == utime_t() ||
-					   first_tx > cutoff))));
-    }
-    bool is_healthy(utime_t cutoff) const {
-      return last_rx_front > cutoff && last_rx_back > cutoff;
+    bool is_unhealthy(utime_t now) {
+      if (ping_history.empty()) {
+        /// we haven't sent a ping yet or we have got all replies,
+        /// in either way we are safe and healthy for now
+        return false;
+      }
+
+      utime_t oldest_deadline = ping_history.begin()->second.first;
+      return now > oldest_deadline;
     }
 
+    bool is_healthy(utime_t now) {
+      if (last_rx_front == utime_t() || last_rx_back == utime_t()) {
+        // only declare to be healthy until we have received the first
+        // replies from both front/back connections
+        return false;
+      }
+      return !is_unhealthy(now);
+    }
   };
   /// state attached to outgoing heartbeat connections
   struct HeartbeatSession : public RefCountedObject {
@@ -1827,6 +1837,9 @@ public:
   }
   void dec_num_pgs() {
     --num_pgs;
+  }
+  int get_num_pgs() const {
+    return num_pgs;
   }
 
 protected:

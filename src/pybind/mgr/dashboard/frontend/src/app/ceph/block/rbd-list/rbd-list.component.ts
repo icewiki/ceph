@@ -2,10 +2,12 @@ import { Component, OnDestroy, OnInit, TemplateRef, ViewChild } from '@angular/c
 
 import * as _ from 'lodash';
 import { BsModalRef, BsModalService } from 'ngx-bootstrap';
+import { Subscription } from 'rxjs';
 
 import { RbdService } from '../../../shared/api/rbd.service';
 import { ConfirmationModalComponent } from '../../../shared/components/confirmation-modal/confirmation-modal.component';
 import { DeletionModalComponent } from '../../../shared/components/deletion-modal/deletion-modal.component';
+import { TableComponent } from '../../../shared/datatable/table/table.component';
 import { CellTemplate } from '../../../shared/enum/cell-template.enum';
 import { ViewCacheStatus } from '../../../shared/enum/view-cache-status.enum';
 import { CdTableColumn } from '../../../shared/models/cd-table-column';
@@ -27,20 +29,25 @@ import { RbdModel } from './rbd-model';
   styleUrls: ['./rbd-list.component.scss']
 })
 export class RbdListComponent implements OnInit, OnDestroy {
-  @ViewChild('usageTpl') usageTpl: TemplateRef<any>;
-  @ViewChild('parentTpl') parentTpl: TemplateRef<any>;
-  @ViewChild('nameTpl') nameTpl: TemplateRef<any>;
-  @ViewChild('flattenTpl') flattenTpl: TemplateRef<any>;
+  @ViewChild(TableComponent)
+  table: TableComponent;
+  @ViewChild('usageTpl')
+  usageTpl: TemplateRef<any>;
+  @ViewChild('parentTpl')
+  parentTpl: TemplateRef<any>;
+  @ViewChild('nameTpl')
+  nameTpl: TemplateRef<any>;
+  @ViewChild('flattenTpl')
+  flattenTpl: TemplateRef<any>;
 
   permission: Permission;
   images: any;
-  executingTasks: ExecutingTask[] = [];
   columns: CdTableColumn[];
   retries: number;
   viewCacheStatusList: any[];
   selection = new CdTableSelection();
 
-  summaryDataSubscription = null;
+  summaryDataSubscription: Subscription;
 
   modalRef: BsModalRef;
 
@@ -51,7 +58,8 @@ export class RbdListComponent implements OnInit, OnDestroy {
     private dimlessPipe: DimlessPipe,
     private summaryService: SummaryService,
     private modalService: BsModalService,
-    private taskWrapper: TaskWrapperService) {
+    private taskWrapper: TaskWrapperService
+  ) {
     this.permission = this.authStorageService.getPermissions().rbdImage;
   }
 
@@ -111,15 +119,17 @@ export class RbdListComponent implements OnInit, OnDestroy {
       }
     ];
 
-    this.summaryService.get().subscribe((resp: any) => {
-      if (!resp) {
-        return;
+    this.summaryDataSubscription = this.summaryService.subscribe(
+      (data: any) => {
+        if (data) {
+          this.loadImages(data.executing_tasks);
+        }
+      },
+      () => {
+        this.table.reset(); // Disable loading indicator.
+        this.viewCacheStatusList = [{ status: ViewCacheStatus.ValueException }];
       }
-      this.loadImages(resp.executing_tasks);
-      this.summaryDataSubscription = this.summaryService.summaryData$.subscribe((data: any) => {
-        this.loadImages(data.executing_tasks);
-      });
-    });
+    );
   }
 
   ngOnDestroy() {
@@ -129,9 +139,6 @@ export class RbdListComponent implements OnInit, OnDestroy {
   }
 
   loadImages(executingTasks) {
-    if (executingTasks === null) {
-      executingTasks = this.executingTasks;
-    }
     this.rbdService.list().subscribe(
       (resp: any[]) => {
         let images = [];
@@ -144,7 +151,7 @@ export class RbdListComponent implements OnInit, OnDestroy {
           images = images.concat(pool.value);
         });
         const viewCacheStatusList = [];
-        _.forEach(viewCacheStatusMap, (value, key) => {
+        _.forEach(viewCacheStatusMap, (value: any, key) => {
           viewCacheStatusList.push({
             status: parseInt(key, 10),
             statusFor:
@@ -163,9 +170,9 @@ export class RbdListComponent implements OnInit, OnDestroy {
           );
         });
         this.images = this.merge(images, executingTasks);
-        this.executingTasks = executingTasks;
       },
       () => {
+        this.table.reset(); // Disable loading indicator.
         this.viewCacheStatusList = [{ status: ViewCacheStatus.ValueException }];
       }
     );
@@ -257,7 +264,6 @@ export class RbdListComponent implements OnInit, OnDestroy {
             pool_name: poolName,
             image_name: imageName
           }),
-          tasks: this.executingTasks,
           call: this.rbdService.delete(poolName, imageName)
         }),
       modalRef: this.modalRef
@@ -271,12 +277,10 @@ export class RbdListComponent implements OnInit, OnDestroy {
           pool_name: poolName,
           image_name: imageName
         }),
-        tasks: this.executingTasks,
         call: this.rbdService.flatten(poolName, imageName)
       })
       .subscribe(undefined, undefined, () => {
         this.modalRef.hide();
-        this.loadImages(null);
       });
   }
 

@@ -107,13 +107,14 @@ public:
       owner_lock(util::unique_lock_name("librbd::ImageCtx::owner_lock", this)),
       md_lock(util::unique_lock_name("librbd::ImageCtx::md_lock", this)),
       snap_lock(util::unique_lock_name("librbd::ImageCtx::snap_lock", this)),
+      timestamp_lock(util::unique_lock_name("librbd::ImageCtx::timestamp_lock", this)),
       parent_lock(util::unique_lock_name("librbd::ImageCtx::parent_lock", this)),
       object_map_lock(util::unique_lock_name("librbd::ImageCtx::object_map_lock", this)),
       async_ops_lock(util::unique_lock_name("librbd::ImageCtx::async_ops_lock", this)),
       copyup_list_lock(util::unique_lock_name("librbd::ImageCtx::copyup_list_lock", this)),
       completed_reqs_lock(util::unique_lock_name("librbd::ImageCtx::completed_reqs_lock", this)),
       extra_read_flags(0),
-      old_format(true),
+      old_format(false),
       order(0), size(0), features(0),
       format_string(NULL),
       id(image_id), parent(NULL),
@@ -148,6 +149,12 @@ public:
       exclusive_lock_policy = new exclusive_lock::StandardPolicy(this);
     }
     journal_policy = new journal::StandardPolicy<ImageCtx>(this);
+  }
+
+  ImageCtx::ImageCtx(const string &image_name, const string &image_id,
+		     uint64_t snap_id, IoCtx& p, bool ro)
+    : ImageCtx(image_name, image_id, "", p, ro) {
+    open_snap_id = snap_id;
   }
 
   ImageCtx::~ImageCtx() {
@@ -427,6 +434,28 @@ public:
   utime_t ImageCtx::get_create_timestamp() const
   {
     return create_timestamp;
+  }
+
+  utime_t ImageCtx::get_access_timestamp() const
+  {
+    return access_timestamp;
+  }
+
+  utime_t ImageCtx::get_modify_timestamp() const
+  {
+    return modify_timestamp;
+  }
+
+  void ImageCtx::set_access_timestamp(utime_t at)
+  {
+    assert(timestamp_lock.is_wlocked());
+    access_timestamp = at;
+  }
+
+  void ImageCtx::set_modify_timestamp(utime_t mt)
+  {
+    assert(timestamp_lock.is_locked());
+    modify_timestamp = mt;
   }
 
   int ImageCtx::is_snap_protected(snap_t in_snap_id,
@@ -770,6 +799,8 @@ public:
         "rbd_mirroring_resync_after_disconnect", false)(
         "rbd_mirroring_delete_delay", false)(
         "rbd_mirroring_replay_delay", false)(
+        "rbd_mtime_update_interval", false)(
+        "rbd_atime_update_interval", false)(
         "rbd_skip_partial_discard", false)(
 	"rbd_qos_iops_limit", false)(
 	"rbd_qos_bps_limit", false)(
@@ -836,6 +867,8 @@ public:
     ASSIGN_OPTION(mirroring_resync_after_disconnect, bool);
     ASSIGN_OPTION(mirroring_delete_delay, uint64_t);
     ASSIGN_OPTION(mirroring_replay_delay, int64_t);
+    ASSIGN_OPTION(mtime_update_interval, uint64_t);
+    ASSIGN_OPTION(atime_update_interval, uint64_t);
     ASSIGN_OPTION(skip_partial_discard, bool);
     ASSIGN_OPTION(blkin_trace_all, bool);
     ASSIGN_OPTION(qos_iops_limit, uint64_t);

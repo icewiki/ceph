@@ -21,7 +21,9 @@ from rbd import (RBD, Group, Image, ImageNotFound, InvalidArgument, ImageExists,
                  RBD_MIRROR_MODE_DISABLED, RBD_MIRROR_MODE_IMAGE,
                  RBD_MIRROR_MODE_POOL, RBD_MIRROR_IMAGE_ENABLED,
                  RBD_MIRROR_IMAGE_DISABLED, MIRROR_IMAGE_STATUS_STATE_UNKNOWN,
-                 RBD_LOCK_MODE_EXCLUSIVE, RBD_OPERATION_FEATURE_GROUP)
+                 RBD_LOCK_MODE_EXCLUSIVE, RBD_OPERATION_FEATURE_GROUP,
+                 RBD_SNAP_NAMESPACE_TYPE_TRASH,
+                 RBD_IMAGE_MIGRATION_STATE_PREPARED)
 
 rados = None
 ioctx = None
@@ -379,6 +381,16 @@ class TestImage(object):
 
     def test_create_timestamp(self):
         timestamp = self.image.create_timestamp()
+        assert_not_equal(0, timestamp.year)
+        assert_not_equal(1970, timestamp.year)
+
+    def test_access_timestamp(self):
+        timestamp = self.image.access_timestamp()
+        assert_not_equal(0, timestamp.year)
+        assert_not_equal(1970, timestamp.year)
+
+    def test_modify_timestamp(self):
+        timestamp = self.image.modify_timestamp()
         assert_not_equal(0, timestamp.year)
         assert_not_equal(1970, timestamp.year)
 
@@ -1373,6 +1385,23 @@ class TestClone(object):
         self.clone.unprotect_snap('snap2')
         self.clone.remove_snap('snap2')
 
+    def test_trash_snapshot(self):
+        self.image.create_snap('snap2')
+        global features
+        clone_name = get_temp_image_name()
+        rados.conf_set("rbd_default_clone_format", "2")
+        self.rbd.clone(ioctx, image_name, 'snap2', ioctx, clone_name, features)
+        rados.conf_set("rbd_default_clone_format", "auto")
+
+        self.image.remove_snap('snap2')
+
+        snaps = [s for s in self.image.list_snaps() if s['name'] != 'snap1']
+        eq([RBD_SNAP_NAMESPACE_TYPE_TRASH], [s['namespace'] for s in snaps])
+        eq([{'original_name' : 'snap2'}], [s['trash'] for s in snaps])
+
+        self.rbd.remove(ioctx, clone_name)
+        eq([], [s for s in self.image.list_snaps() if s['name'] != 'snap1'])
+
 class TestExclusiveLock(object):
 
     @require_features([RBD_FEATURE_EXCLUSIVE_LOCK])
@@ -1846,10 +1875,8 @@ class TestGroups(object):
         eq([snap_name], [snap['name'] for snap in self.group.list_snaps()])
 
         for snap in self.image.list_snaps():
-            eq(rbd.RBD_SNAP_NAMESPACE_TYPE_GROUP,
-               self.image.snap_get_namespace_type(snap['id']))
-
-            info = self.image.snap_get_group_namespace(snap['id'])
+            eq(rbd.RBD_SNAP_NAMESPACE_TYPE_GROUP, snap['namespace'])
+            info = snap['group']
             eq(group_name, info['group_name'])
             eq(snap_name, info['group_snap_name'])
 
@@ -1894,3 +1921,28 @@ class TestGroups(object):
 def test_rename():
     rbd = RBD()
     image_name2 = get_temp_image_name()
+
+class TestMigration(object):
+
+    def test_migration(self):
+        create_image()
+        RBD().migration_prepare(ioctx, image_name, ioctx, image_name, features=63,
+                                order=23, stripe_unit=1<<23, stripe_count=1,
+                                data_pool=None)
+
+        status = RBD().migration_status(ioctx, image_name)
+        eq(image_name, status['source_image_name'])
+        eq(image_name, status['dest_image_name'])
+        eq(RBD_IMAGE_MIGRATION_STATE_PREPARED, status['state'])
+
+        RBD().migration_execute(ioctx, image_name)
+        RBD().migration_commit(ioctx, image_name)
+        remove_image()
+
+    def test_migrate_abort(self):
+        create_image()
+        RBD().migration_prepare(ioctx, image_name, ioctx, image_name, features=63,
+                                order=23, stripe_unit=1<<23, stripe_count=1,
+                                data_pool=None)
+        RBD().migration_abort(ioctx, image_name)
+        remove_image()

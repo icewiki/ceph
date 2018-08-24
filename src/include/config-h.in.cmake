@@ -117,9 +117,6 @@
 /* Define if you have tcmalloc */
 #cmakedefine HAVE_LIBTCMALLOC
 
-/* Define if you have jemalloc */
-#cmakedefine HAVE_LIBJEMALLOC
-
 /* Define if have curl_multi_wait() */
 #cmakedefine HAVE_CURL_MULTI_WAIT 1
 
@@ -335,6 +332,9 @@
 
 /* Defined if boost::context is available */
 #cmakedefine HAVE_BOOST_CONTEXT
+
+/* Defined if libradosstriper is enabled: */
+#cmakedefine WITH_LIBRADOSSTRIPER
 
 /* Defined if OpenSSL is available for the rgw beast frontend */
 #cmakedefine WITH_RADOSGW_BEAST_OPENSSL

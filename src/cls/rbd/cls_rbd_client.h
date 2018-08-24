@@ -120,6 +120,11 @@ namespace librbd {
     int get_children(librados::IoCtx *ioctx, const std::string &oid,
                       const ParentSpec &pspec, set<string>& children);
 
+    void snapshot_info_get_start(librados::ObjectReadOperation* op,
+                                 snapid_t snap_id);
+    int snapshot_info_get_finish(bufferlist::const_iterator* it,
+                                 cls::rbd::SnapshotInfo* snap_info);
+
     void snapshot_get_start(librados::ObjectReadOperation *op,
                             const std::vector<snapid_t> &ids);
     int snapshot_get_finish(bufferlist::const_iterator *it,
@@ -217,6 +222,25 @@ namespace librbd {
                                     utime_t *timestamp);
     int get_create_timestamp(librados::IoCtx *ioctx, const std::string &oid,
                              utime_t *timestamp);
+
+    void get_access_timestamp_start(librados::ObjectReadOperation *op);
+    int get_access_timestamp_finish(bufferlist::const_iterator *it,
+                                    utime_t *timestamp);
+    int get_access_timestamp(librados::IoCtx *ioctx, const std::string &oid,
+                             utime_t *timestamp);
+
+    void get_modify_timestamp_start(librados::ObjectReadOperation *op);
+    int get_modify_timestamp_finish(bufferlist::const_iterator *it,
+                                    utime_t *timestamp);
+    int get_modify_timestamp(librados::IoCtx *ioctx, const std::string &oid,
+                             utime_t *timestamp);
+
+    void set_modify_timestamp(librados::ObjectWriteOperation *op);
+    int set_modify_timestamp(librados::IoCtx *ioctx, const std::string &oid);
+
+    void set_access_timestamp(librados::ObjectWriteOperation *op);
+    int set_access_timestamp(librados::IoCtx *ioctx, const std::string &oid);
+
     int metadata_list(librados::IoCtx *ioctx, const std::string &oid,
                       const std::string &start, uint64_t max_return,
                       map<string, bufferlist> *pairs);
@@ -252,6 +276,31 @@ namespace librbd {
     int children_list(librados::IoCtx *ioctx, const std::string &oid,
                       snapid_t snap_id,
                       cls::rbd::ChildImageSpecs *child_images);
+
+    int migration_set(librados::IoCtx *ioctx, const std::string &oid,
+                    const cls::rbd::MigrationSpec &migration_spec);
+    void migration_set(librados::ObjectWriteOperation *op,
+                     const cls::rbd::MigrationSpec &migration_spec);
+    int migration_set_state(librados::IoCtx *ioctx, const std::string &oid,
+                            cls::rbd::MigrationState state,
+                            const std::string &description);
+    void migration_set_state(librados::ObjectWriteOperation *op,
+                             cls::rbd::MigrationState state,
+                             const std::string &description);
+    void migration_get_start(librados::ObjectReadOperation *op);
+    int migration_get_finish(bufferlist::const_iterator *it,
+                           cls::rbd::MigrationSpec *migration_spec);
+    int migration_get(librados::IoCtx *ioctx, const std::string &oid,
+                      cls::rbd::MigrationSpec *migration_spec);
+    int migration_remove(librados::IoCtx *ioctx, const std::string &oid);
+    void migration_remove(librados::ObjectWriteOperation *op);
+
+    int assert_snapc_seq(librados::IoCtx *ioctx, const std::string &oid,
+                         uint64_t snapc_seq,
+                         cls::rbd::AssertSnapcSeqState state);
+    void assert_snapc_seq(librados::ObjectWriteOperation *op,
+                          uint64_t snapc_seq,
+                         cls::rbd::AssertSnapcSeqState state);
 
     // operations on rbd_id objects
     void get_id_start(librados::ObjectReadOperation *op);

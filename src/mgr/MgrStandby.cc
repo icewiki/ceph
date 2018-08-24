@@ -188,6 +188,10 @@ void MgrStandby::send_beacon()
   // which we will transmit to the monitor.
   std::vector<MgrMap::ModuleInfo> module_info;
   for (const auto &module : modules) {
+    // do not announce always_on modules to the monitor
+    if (module->is_always_on()) {
+      continue;
+    }
     MgrMap::ModuleInfo info;
     info.name = module->get_name();
     info.error_string = module->get_error_string();
@@ -237,10 +241,6 @@ void MgrStandby::tick()
 {
   dout(10) << __func__ << dendl;
   send_beacon();
-
-  if (active_mgr && active_mgr->is_initialized()) {
-    active_mgr->tick();
-  }
 
   timer.add_event_after(
       g_conf().get_val<std::chrono::seconds>("mgr_tick_period").count(),

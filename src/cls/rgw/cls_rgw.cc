@@ -1912,8 +1912,12 @@ int rgw_dir_suggest_changes(cls_method_context_t hctx,
     string cur_change_key;
     encode_obj_index_key(cur_change.key, &cur_change_key);
     int ret = cls_cxx_map_get_val(hctx, cur_change_key, &cur_disk_bl);
-    if (ret < 0)
+    if (ret < 0 && ret != -ENOENT)
       return -EINVAL;
+
+    if (ret == -ENOENT) {
+      continue;
+    }
 
     if (cur_disk_bl.length()) {
       auto cur_disk_iter = cur_disk_bl.cbegin();
@@ -3313,7 +3317,7 @@ static int gc_iterate_entries(cls_method_context_t hctx, const string& marker, b
     get_time_key(now, &now_str);
     prepend_index_prefix(now_str, GC_OBJ_TIME_INDEX, &end_key);
 
-    CLS_LOG(0, "gc_iterate_entries end_key=%s\n", end_key.c_str());
+    CLS_LOG(10, "gc_iterate_entries end_key=%s\n", end_key.c_str());
   }
 
   string filter;

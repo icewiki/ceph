@@ -6,13 +6,13 @@
 #include "common/config.h"
 
 #include "include/Context.h"
-#include "include/alloc_ptr.h"
 #include "include/assert.h"
 #include "include/mempool.h"
 #include "include/types.h"
 #include "include/xlist.h"
 
 #include "mdstypes.h"
+#include "MDSContext.h"
 
 #define MDS_REF_SET      // define me for improved debug output, sanity checking
 //#define MDS_AUTHPIN_SET  // define me for debugging auth pin leaks
@@ -235,7 +235,14 @@ protected:
 
   // --------------------------------------------
   // auth pins
-  virtual bool can_auth_pin() const = 0;
+  enum {
+    // can_auth_pin() error codes
+    ERR_NOT_AUTH = 1,
+    ERR_EXPORTING_TREE,
+    ERR_FRAGMENTING_DIR,
+    ERR_EXPORTING_INODE,
+  };
+  virtual bool can_auth_pin(int *err_code=nullptr) const = 0;
   virtual void auth_pin(void *who) = 0;
   virtual void auth_unpin(void *who) = 0;
   virtual bool is_frozen() const = 0;
@@ -299,7 +306,7 @@ protected:
   // ---------------------------------------------
   // waiting
  private:
-  alloc_ptr<mempool::mds_co::multimap<uint64_t, std::pair<uint64_t, MDSInternalContextBase*>>> waiting;
+  mempool::mds_co::compact_multimap<uint64_t, std::pair<uint64_t, MDSInternalContextBase*>> waiting;
   static uint64_t last_wait_seq;
 
  public:
@@ -309,16 +316,14 @@ protected:
       while (min & (min-1))  // if more than one bit is set
         min &= min-1;        //  clear LSB
     }
-    if (waiting) {
-      for (auto p = waiting->lower_bound(min); p != waiting->end(); ++p) {
-        if (p->first & mask) return true;
-        if (p->first > mask) return false;
-      }
+    for (auto p = waiting.lower_bound(min); p != waiting.end(); ++p) {
+      if (p->first & mask) return true;
+      if (p->first > mask) return false;
     }
     return false;
   }
   virtual void add_waiter(uint64_t mask, MDSInternalContextBase *c) {
-    if (waiting->empty())
+    if (waiting.empty())
       get(PIN_WAITER);
 
     uint64_t seq = 0;
@@ -326,7 +331,7 @@ protected:
       seq = ++last_wait_seq;
       mask &= ~WAIT_ORDERED;
     }
-    waiting->insert(pair<uint64_t, pair<uint64_t, MDSInternalContextBase*> >(
+    waiting.insert(pair<uint64_t, pair<uint64_t, MDSInternalContextBase*> >(
 			    mask,
 			    pair<uint64_t, MDSInternalContextBase*>(seq, c)));
 //    pdout(10,g_conf()->debug_mds) << (mdsco_db_line_prefix(this)) 
@@ -335,13 +340,13 @@ protected:
 //			       << dendl;
     
   }
-  virtual void take_waiting(uint64_t mask, std::list<MDSInternalContextBase*>& ls) {
-    if (!waiting || waiting->empty()) return;
+  virtual void take_waiting(uint64_t mask, MDSInternalContextBase::vec& ls) {
+    if (waiting.empty()) return;
 
     // process ordered waiters in the same order that they were added.
     std::map<uint64_t, MDSInternalContextBase*> ordered_waiters;
 
-    for (auto it = waiting->begin(); it != waiting->end(); ) {
+    for (auto it = waiting.begin(); it != waiting.end(); ) {
       if (it->first & mask) {
 	    if (it->second.first > 0) {
 	      ordered_waiters.insert(it->second);
@@ -353,7 +358,7 @@ protected:
 //				   << " tag " << hex << it->first << dec
 //				   << " on " << *this
 //				   << dendl;
-        waiting->erase(it++);
+        waiting.erase(it++);
       } else {
 //	pdout(10,g_conf()->debug_mds) << "take_waiting mask " << hex << mask << dec << " SKIPPING " << it->second
 //				   << " tag " << hex << it->first << dec
@@ -365,9 +370,9 @@ protected:
     for (auto it = ordered_waiters.begin(); it != ordered_waiters.end(); ++it) {
       ls.push_back(it->second);
     }
-    if (waiting->empty()) {
+    if (waiting.empty()) {
       put(PIN_WAITER);
-      waiting.reset();
+      waiting.clear();
     }
   }
   void finish_waiting(uint64_t mask, int result = 0);
@@ -378,7 +383,7 @@ protected:
   virtual SimpleLock* get_lock(int type) { ceph_abort(); return 0; }
   virtual void set_object_info(MDSCacheObjectInfo &info) { ceph_abort(); }
   virtual void encode_lock_state(int type, bufferlist& bl) { ceph_abort(); }
-  virtual void decode_lock_state(int type, bufferlist& bl) { ceph_abort(); }
+  virtual void decode_lock_state(int type, const bufferlist& bl) { ceph_abort(); }
   virtual void finish_lock_waiters(int type, uint64_t mask, int r=0) { ceph_abort(); }
   virtual void add_lock_waiter(int type, uint64_t mask, MDSInternalContextBase *c) { ceph_abort(); }
   virtual bool is_lock_waiting(int type, uint64_t mask) { ceph_abort(); return false; }

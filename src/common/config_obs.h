@@ -20,15 +20,14 @@
 
 #include "common/config_fwd.h"
 
-namespace ceph::internal {
-
+namespace ceph {
 /** @brief Base class for configuration observers.
  * Use this as a base class for your object if it has to respond to configuration changes,
  * for example by updating some values or modifying its behavior.
  * Subscribe for configuration changes by calling the md_config_t::add_observer() method
  * and unsubscribe using md_config_t::remove_observer().
  */
-template<LockPolicy lp>
+template<class ConfigProxy>
 class md_config_obs_impl {
 public:
   virtual ~md_config_obs_impl() {}
@@ -45,5 +44,4 @@ public:
 				    const std::set<int>& changed) { }
 };
 }
-
 #endif

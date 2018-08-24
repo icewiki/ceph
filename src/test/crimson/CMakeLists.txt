@@ -10,6 +10,7 @@ add_ceph_unittest(unittest_seastar_denc)
 target_link_libraries(unittest_seastar_denc ceph-common global crimson)
 
 add_executable(unittest_seastar_messenger test_messenger.cc)
+add_ceph_unittest(unittest_seastar_messenger)
 target_link_libraries(unittest_seastar_messenger ceph-common crimson)
 
 add_executable(unittest_seastar_echo
@@ -20,3 +21,7 @@ add_executable(unittest_seastar_thread_pool
   test_thread_pool.cc)
 add_ceph_unittest(unittest_seastar_thread_pool)
 target_link_libraries(unittest_seastar_thread_pool crimson)
+
+add_executable(unittest_seastar_config
+  test_config.cc)
+target_link_libraries(unittest_seastar_config crimson)

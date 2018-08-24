@@ -34,11 +34,6 @@ class Module(MgrModule):
             "desc": "Force sending data to Telegraf",
             "perm": "rw"
         },
-        {
-            "cmd": "telegraf self-test",
-            "desc": "debug the module",
-            "perm": "rw"
-        },
     ]
 
     OPTIONS = [
@@ -106,6 +101,8 @@ class Module(MgrModule):
         for daemon, counters in six.iteritems(self.get_all_perf_counters()):
             svc_type, svc_id = daemon.split('.', 1)
             metadata = self.get_metadata(svc_type, svc_id)
+            if not metadata:
+                continue
 
             for path, counter_info in counters.items():
                 if counter_info['type'] & self.PERFCOUNTER_HISTOGRAM:
@@ -275,9 +272,6 @@ class Module(MgrModule):
         elif cmd['prefix'] == 'telegraf send':
             self.send_to_telegraf()
             return 0, 'Sending data to Telegraf', ''
-        if cmd['prefix'] == 'telegraf self-test':
-            self.self_test()
-            return 0, '', 'Self-test OK'
 
         return (-errno.EINVAL, '',
                 "Command not found '{0}'".format(cmd['prefix']))

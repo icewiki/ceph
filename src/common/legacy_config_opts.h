@@ -679,8 +679,6 @@ OPTION(osd_recovery_sleep_hdd, OPT_FLOAT)
 OPTION(osd_recovery_sleep_ssd, OPT_FLOAT)
 OPTION(osd_snap_trim_sleep, OPT_DOUBLE)
 OPTION(osd_scrub_invalid_stats, OPT_BOOL)
-OPTION(osd_remove_thread_timeout, OPT_INT)
-OPTION(osd_remove_thread_suicide_timeout, OPT_INT)
 OPTION(osd_command_thread_timeout, OPT_INT)
 OPTION(osd_command_thread_suicide_timeout, OPT_INT)
 OPTION(osd_heartbeat_interval, OPT_INT)       // (seconds) how often we ping peers
@@ -720,7 +718,6 @@ OPTION(osd_copyfrom_max_chunk, OPT_U64)   // max size of a COPYFROM chunk
 OPTION(osd_push_per_object_cost, OPT_U64)  // push cost per object
 OPTION(osd_max_push_cost, OPT_U64)  // max size of push message
 OPTION(osd_max_push_objects, OPT_U64)  // max objects in single push op
-OPTION(osd_recovery_forget_lost_objects, OPT_BOOL)   // off for now
 OPTION(osd_max_scrubs, OPT_INT)
 OPTION(osd_scrub_during_recovery, OPT_BOOL) // Allow new scrubs to start while recovery is active on the OSD
 OPTION(osd_scrub_begin_hour, OPT_INT)
@@ -1227,8 +1224,6 @@ OPTION(journal_aio, OPT_BOOL)
 OPTION(journal_force_aio, OPT_BOOL)
 OPTION(journal_block_size, OPT_INT)
 
-// max bytes to search ahead in journal searching for corruption
-OPTION(journal_max_corrupt_search, OPT_U64)
 OPTION(journal_block_align, OPT_BOOL)
 OPTION(journal_write_header_frequency, OPT_U64)
 OPTION(journal_max_write_bytes, OPT_INT)
@@ -1297,6 +1292,7 @@ OPTION(rgw_host, OPT_STR)  // host for radosgw, can be an IP, default is 0.0.0.0
 OPTION(rgw_port, OPT_STR)  // port to listen, format as "8080" "5000", if not specified, rgw will not run external fcgi
 OPTION(rgw_dns_name, OPT_STR) // hostname suffix on buckets
 OPTION(rgw_dns_s3website_name, OPT_STR) // hostname suffix on buckets for s3-website endpoint
+OPTION(rgw_service_provider_name, OPT_STR) //service provider name which is contained in http response headers
 OPTION(rgw_content_length_compat, OPT_BOOL) // Check both HTTP_CONTENT_LENGTH and CONTENT_LENGTH in fcgi env
 OPTION(rgw_lifecycle_work_time, OPT_STR) //job process lc  at 00:00-06:00s
 OPTION(rgw_lc_lock_max_time, OPT_INT)  // total run time for a single lc processor work
@@ -1338,6 +1334,10 @@ OPTION(rgw_s3_auth_use_rados, OPT_BOOL)  // should we try to use the internal cr
 OPTION(rgw_s3_auth_use_keystone, OPT_BOOL)  // should we try to use keystone for s3?
 OPTION(rgw_s3_auth_order, OPT_STR) // s3 authentication order to try
 OPTION(rgw_barbican_url, OPT_STR)  // url for barbican server
+OPTION(rgw_opa_url, OPT_STR)  // url for OPA server
+OPTION(rgw_opa_token, OPT_STR)  // Bearer token OPA uses to authenticate client requests
+OPTION(rgw_opa_verify_ssl, OPT_BOOL) // should we try to verify OPA's ssl
+OPTION(rgw_use_opa_authz, OPT_BOOL) // should we use OPA to authorize client requests?
 
 /* OpenLDAP-style LDAP parameter strings */
 /* rgw_ldap_uri  space-separated list of LDAP servers in URI format */
@@ -1541,3 +1541,4 @@ OPTION(rgw_max_objs_per_shard, OPT_INT)
 OPTION(rgw_reshard_thread_interval, OPT_U32) // maximum time between rounds of reshard thread processing
 
 OPTION(rgw_acl_grants_max_num, OPT_INT) // According to AWS S3(http://docs.aws.amazon.com/AmazonS3/latest/dev/acl-overview.html), An ACL can have up to 100 grants.
+OPTION(rgw_cors_rules_max_num, OPT_INT) // According to AWS S3(http://docs.aws.amazon.com/AmazonS3/latest/dev/cors.html), An cors can have up to 100 rules.

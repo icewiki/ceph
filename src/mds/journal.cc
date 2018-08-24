@@ -1682,7 +1682,7 @@ void ESession::replay(MDSRank *mds)
     } else {
       session = mds->sessionmap.get_session(client_inst.name);
       if (session) { // there always should be a session, but there's a bug
-	if (session->connection == NULL) {
+	if (session->get_connection() == NULL) {
 	  dout(10) << " removed session " << session->info.inst << dendl;
 	  mds->sessionmap.remove_session(session);
           session = NULL;
@@ -1913,12 +1913,15 @@ void ETableServer::replay(MDSRank *mds)
   assert(version-1 == server->get_version());
 
   switch (op) {
-  case TABLESERVER_OP_PREPARE:
+  case TABLESERVER_OP_PREPARE: {
     server->_note_prepare(bymds, reqid, true);
-    server->_prepare(mutation, reqid, bymds);
+    bufferlist out;
+    server->_prepare(mutation, reqid, bymds, out);
+    mutation = std::move(out);
     break;
+  }
   case TABLESERVER_OP_COMMIT:
-    server->_commit(tid);
+    server->_commit(tid, MMDSTableRequest::ref());
     server->_note_commit(tid, true);
     break;
   case TABLESERVER_OP_ROLLBACK:
@@ -2722,7 +2725,7 @@ void EFragment::replay(MDSRank *mds)
   dout(10) << "EFragment.replay " << op_name(op) << " " << ino << " " << basefrag << " by " << bits << dendl;
 
   list<CDir*> resultfrags;
-  list<MDSInternalContextBase*> waiters;
+  MDSInternalContextBase::vec waiters;
   list<frag_t> old_frags;
 
   // in may be NULL if it wasn't in our cache yet.  if it's a prepare

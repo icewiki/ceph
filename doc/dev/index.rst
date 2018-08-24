@@ -6,7 +6,7 @@ Contributing to Ceph: A Guide for Developers
 :Author: Nathan Cutler
 :License: Creative Commons Attribution Share Alike 3.0 (CC-BY-SA-3.0)
 
-.. note:: The old (pre-2016) developer documentation has been moved to :doc:`/dev/index-old`.
+.. note:: You may also be interested in the :doc:`/dev/internals` documentation.
 
 .. contents::
    :depth: 3
@@ -202,6 +202,11 @@ Development-mode cluster
 ------------------------
 
 See :doc:`/dev/quick_guide`.
+
+Kubernetes/Rook development cluster
+-----------------------------------
+
+See :ref:`kubernetes-dev`
 
 Backporting
 -----------
@@ -815,7 +820,7 @@ The ``suites`` directory of the `ceph/qa sub-directory`_ contains
 all the integration tests, for all the Ceph components.
 
 `ceph-deploy <https://github.com/ceph/ceph/tree/master/qa/suites/ceph-deploy>`_
-  install a Ceph cluster with ``ceph-deploy`` (`ceph-deploy man page`_)
+  install a Ceph cluster with ``ceph-deploy`` (:ref:`ceph-deploy man page <ceph-deploy>`)
 
 `dummy <https://github.com/ceph/ceph/tree/master/qa/suites/dummy>`_
   get a machine, do nothing and return success (commonly used to

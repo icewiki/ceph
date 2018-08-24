@@ -27,7 +27,7 @@ sensible.
 
     Installation and Configuration <administrator>
     Writing plugins <plugins>
-    Balancer plugin <balancer>
+    Writing orchestrator plugins <orchestrator_modules>
     Dashboard plugin <dashboard>
     Local pool plugin <localpool>
     RESTful plugin <restful>
@@ -39,3 +39,6 @@ sensible.
     Telemetry plugin <telemetry>
     Iostat plugin <iostat>
     Crash plugin <crash>
+    Devicehealth plugin <devicehealth>
+    Orchestrator CLI plugin <orchestrator_cli>
+    Rook plugin <rook>

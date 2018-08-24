@@ -549,14 +549,30 @@ namespace librbd {
       return get_children_finish(&it, &children);
     }
 
+    void snapshot_info_get_start(librados::ObjectReadOperation *op,
+                                 snapid_t snap_id)
+    {
+      bufferlist bl;
+      encode(snap_id, bl);
+      op->exec("rbd", "snapshot_get", bl);
+    }
+
+    int snapshot_info_get_finish(bufferlist::const_iterator* it,
+                                 cls::rbd::SnapshotInfo* snap_info)
+    {
+      try {
+        decode(*snap_info, *it);
+      } catch (const buffer::error &err) {
+        return -EBADMSG;
+      }
+      return 0;
+    }
+
     void snapshot_get_start(librados::ObjectReadOperation *op,
                             const std::vector<snapid_t> &ids)
     {
       for (auto snap_id : ids) {
-        bufferlist bl;
-        encode(snap_id, bl);
-        op->exec("rbd", "snapshot_get", bl);
-
+        snapshot_info_get_start(op, snap_id);
         get_parent_start(op, snap_id);
         get_protection_status_start(op, snap_id);
       }
@@ -573,11 +589,15 @@ namespace librbd {
       protection_statuses->resize(ids.size());
       try {
 	for (size_t i = 0; i < snaps->size(); ++i) {
-          decode((*snaps)[i], *it);
+          // snapshot_get
+          int r = snapshot_info_get_finish(it, &(*snaps)[i]);
+          if (r < 0) {
+            return r;
+          }
 
-	  // get_parent
-	  int r = get_parent_finish(it, &(*parents)[i].spec,
-                                    &(*parents)[i].overlap);
+          // get_parent
+          r = get_parent_finish(it, &(*parents)[i].spec,
+                                &(*parents)[i].overlap);
           if (r < 0) {
             return r;
           }
@@ -1045,6 +1065,32 @@ namespace librbd {
       return ioctx->operate(oid, &op);
     }
 
+    void set_modify_timestamp(librados::ObjectWriteOperation *op)
+    {
+        bufferlist empty_bl;
+        op->exec("rbd","set_modify_timestamp",empty_bl);
+    }
+
+    int set_modify_timestamp(librados::IoCtx *ioctx, const std::string &oid)
+    {
+        librados::ObjectWriteOperation op;
+        set_modify_timestamp(&op);
+        return ioctx->operate(oid, &op);
+    }
+
+    void set_access_timestamp(librados::ObjectWriteOperation *op)
+    {
+        bufferlist empty_bl;
+        op->exec("rbd","set_access_timestamp",empty_bl);
+    }
+
+    int set_access_timestamp(librados::IoCtx *ioctx, const std::string &oid)
+    {
+        librados::ObjectWriteOperation op;
+        set_access_timestamp(&op);
+        return ioctx->operate(oid, &op);
+    }
+
     void get_create_timestamp_start(librados::ObjectReadOperation *op) {
       bufferlist empty_bl;
       op->exec("rbd", "get_create_timestamp", empty_bl);
@@ -1076,6 +1122,72 @@ namespace librbd {
 
       auto it = out_bl.cbegin();
       return get_create_timestamp_finish(&it, timestamp);
+    }
+
+    void get_access_timestamp_start(librados::ObjectReadOperation *op) {
+      bufferlist empty_bl;
+      op->exec("rbd", "get_access_timestamp", empty_bl);
+    }
+
+    int get_access_timestamp_finish(bufferlist::const_iterator *it,
+                                    utime_t *timestamp) {
+      assert(timestamp);
+      
+      try {
+        decode(*timestamp, *it);
+      } catch (const buffer::error &err) {
+        return -EBADMSG;
+      }
+      return 0;
+    }
+
+    int get_access_timestamp(librados::IoCtx *ioctx, const std::string &oid,
+                             utime_t *timestamp)
+    {
+      librados::ObjectReadOperation op;
+      get_access_timestamp_start(&op);
+
+      bufferlist out_bl;
+      int r = ioctx->operate(oid, &op, &out_bl);
+      if (r < 0) {
+        return r;
+      }
+
+      auto it = out_bl.cbegin();
+      return get_access_timestamp_finish(&it, timestamp);
+    }
+
+    void get_modify_timestamp_start(librados::ObjectReadOperation *op) {
+      bufferlist empty_bl;
+      op->exec("rbd", "get_modify_timestamp", empty_bl);
+    }
+
+    int get_modify_timestamp_finish(bufferlist::const_iterator *it,
+                                      utime_t *timestamp) {
+      assert(timestamp);
+      
+      try {
+        decode(*timestamp, *it);
+      } catch (const buffer::error &err) {
+        return -EBADMSG;
+      }
+      return 0;
+    }
+
+    int get_modify_timestamp(librados::IoCtx *ioctx, const std::string &oid,
+                               utime_t *timestamp)
+    {
+      librados::ObjectReadOperation op;
+      get_modify_timestamp_start(&op);
+
+      bufferlist out_bl;
+      int r = ioctx->operate(oid, &op, &out_bl);
+      if (r < 0) {
+        return r;
+      }
+
+      auto it = out_bl.cbegin();
+      return get_modify_timestamp_finish(&it, timestamp);
     }
 
     /************************ rbd_id object methods ************************/
@@ -1569,6 +1681,99 @@ namespace librbd {
         return r;
       }
       return 0;
+    }
+
+    int migration_set(librados::IoCtx *ioctx, const std::string &oid,
+                      const cls::rbd::MigrationSpec &migration_spec) {
+      librados::ObjectWriteOperation op;
+      migration_set(&op, migration_spec);
+      return ioctx->operate(oid, &op);
+    }
+
+    void migration_set(librados::ObjectWriteOperation *op,
+                       const cls::rbd::MigrationSpec &migration_spec) {
+      bufferlist bl;
+      encode(migration_spec, bl);
+      op->exec("rbd", "migration_set", bl);
+    }
+
+    int migration_set_state(librados::IoCtx *ioctx, const std::string &oid,
+                            cls::rbd::MigrationState state,
+                            const std::string &description) {
+      librados::ObjectWriteOperation op;
+      migration_set_state(&op, state, description);
+      return ioctx->operate(oid, &op);
+    }
+
+    void migration_set_state(librados::ObjectWriteOperation *op,
+                             cls::rbd::MigrationState state,
+                             const std::string &description) {
+      bufferlist bl;
+      encode(state, bl);
+      encode(description, bl);
+      op->exec("rbd", "migration_set_state", bl);
+    }
+
+    void migration_get_start(librados::ObjectReadOperation *op) {
+      bufferlist bl;
+      op->exec("rbd", "migration_get", bl);
+    }
+
+    int migration_get_finish(bufferlist::const_iterator *it,
+                             cls::rbd::MigrationSpec *migration_spec) {
+      try {
+	decode(*migration_spec, *it);
+      } catch (const buffer::error &err) {
+	return -EBADMSG;
+      }
+      return 0;
+    }
+
+    int migration_get(librados::IoCtx *ioctx, const std::string &oid,
+                      cls::rbd::MigrationSpec *migration_spec) {
+      librados::ObjectReadOperation op;
+      migration_get_start(&op);
+
+      bufferlist out_bl;
+      int r = ioctx->operate(oid, &op, &out_bl);
+      if (r < 0) {
+	return r;
+      }
+
+      auto iter = out_bl.cbegin();
+      r = migration_get_finish(&iter, migration_spec);
+      if (r < 0) {
+	return r;
+      }
+      return 0;
+    }
+
+    int migration_remove(librados::IoCtx *ioctx, const std::string &oid) {
+      librados::ObjectWriteOperation op;
+      migration_remove(&op);
+      return ioctx->operate(oid, &op);
+    }
+
+    void migration_remove(librados::ObjectWriteOperation *op) {
+      bufferlist bl;
+      op->exec("rbd", "migration_remove", bl);
+    }
+
+    int assert_snapc_seq(librados::IoCtx *ioctx, const std::string &oid,
+                         uint64_t snapc_seq,
+                         cls::rbd::AssertSnapcSeqState state) {
+      librados::ObjectWriteOperation op;
+      assert_snapc_seq(&op, snapc_seq, state);
+      return ioctx->operate(oid, &op);
+    }
+
+    void assert_snapc_seq(librados::ObjectWriteOperation *op,
+                          uint64_t snapc_seq,
+                          cls::rbd::AssertSnapcSeqState state) {
+      bufferlist bl;
+      encode(snapc_seq, bl);
+      encode(state, bl);
+      op->exec("rbd", "assert_snapc_seq", bl);
     }
 
     void mirror_uuid_get_start(librados::ObjectReadOperation *op) {

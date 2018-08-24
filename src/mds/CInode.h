@@ -30,6 +30,7 @@
 #include "include/compact_set.h"
 
 #include "MDSCacheObject.h"
+#include "MDSContext.h"
 #include "flock.h"
 
 #include "CDentry.h"
@@ -40,18 +41,18 @@
 #include "SnapRealm.h"
 #include "Mutation.h"
 
+#include "messages/MClientCaps.h"
+
 #define dout_context g_ceph_context
 
 class Context;
 class CDentry;
 class CDir;
-class Message;
 class CInode;
 class MDCache;
 class LogSegment;
 struct SnapRealm;
 class Session;
-class MClientCaps;
 struct ObjectOperation;
 class EMetaBlob;
 
@@ -720,7 +721,7 @@ public:
   void set_ambiguous_auth() {
     state_set(STATE_AMBIGUOUSAUTH);
   }
-  void clear_ambiguous_auth(std::list<MDSInternalContextBase*>& finished);
+  void clear_ambiguous_auth(MDSInternalContextBase::vec& finished);
   void clear_ambiguous_auth();
 
   inodeno_t ino() const { return inode.ino; }
@@ -798,7 +799,7 @@ public:
   bool is_dirty_pool() { return state_test(STATE_DIRTYPOOL); }
 
   void encode_snap_blob(bufferlist &bl);
-  void decode_snap_blob(bufferlist &bl);
+  void decode_snap_blob(const bufferlist &bl);
   void encode_store(bufferlist& bl, uint64_t features);
   void decode_store(bufferlist::const_iterator& bl);
 
@@ -828,15 +829,15 @@ public:
 
   // -- waiting --
 protected:
-  mempool::mds_co::compact_map<frag_t, std::list<MDSInternalContextBase*> > waiting_on_dir;
+  mempool::mds_co::compact_map<frag_t, MDSInternalContextBase::vec > waiting_on_dir;
 public:
   void add_dir_waiter(frag_t fg, MDSInternalContextBase *c);
-  void take_dir_waiting(frag_t fg, std::list<MDSInternalContextBase*>& ls);
+  void take_dir_waiting(frag_t fg, MDSInternalContextBase::vec& ls);
   bool is_waiting_for_dir(frag_t fg) {
     return waiting_on_dir.count(fg);
   }
   void add_waiter(uint64_t tag, MDSInternalContextBase *c) override;
-  void take_waiting(uint64_t tag, std::list<MDSInternalContextBase*>& ls) override;
+  void take_waiting(uint64_t tag, MDSInternalContextBase::vec& ls) override;
 
   // -- encode/decode helpers --
   void _encode_base(bufferlist& bl, uint64_t features);
@@ -846,7 +847,7 @@ public:
   void _encode_locks_state_for_replica(bufferlist& bl, bool need_recover);
   void _encode_locks_state_for_rejoin(bufferlist& bl, int rep);
   void _decode_locks_state(bufferlist::const_iterator& p, bool is_new);
-  void _decode_locks_rejoin(bufferlist::const_iterator& p, std::list<MDSInternalContextBase*>& waiters,
+  void _decode_locks_rejoin(bufferlist::const_iterator& p, MDSInternalContextBase::vec& waiters,
 			    std::list<SimpleLock*>& eval_locks, bool survivor);
 
   // -- import/export --
@@ -865,7 +866,7 @@ public:
   int encode_inodestat(bufferlist& bl, Session *session, SnapRealm *realm,
 		       snapid_t snapid=CEPH_NOSNAP, unsigned max_bytes=0,
 		       int getattr_wants=0);
-  void encode_cap_message(MClientCaps *m, Capability *cap);
+  void encode_cap_message(const MClientCaps::ref &m, Capability *cap);
 
 
   // -- locks --
@@ -910,7 +911,7 @@ public:
 
   void set_object_info(MDSCacheObjectInfo &info) override;
   void encode_lock_state(int type, bufferlist& bl) override;
-  void decode_lock_state(int type, bufferlist& bl) override;
+  void decode_lock_state(int type, const bufferlist& bl) override;
 
   void _finish_frag_update(CDir *dir, MutationRef& mut);
 
@@ -1031,7 +1032,7 @@ public:
 
   // -- auth pins --
   void adjust_nested_auth_pins(int a, void *by);
-  bool can_auth_pin() const override;
+  bool can_auth_pin(int *err_ret=nullptr) const override;
   void auth_pin(void *by) override;
   void auth_unpin(void *by) override;
 
@@ -1046,7 +1047,7 @@ public:
   /* Freeze the inode. auth_pin_allowance lets the caller account for any
    * auth_pins it is itself holding/responsible for. */
   bool freeze_inode(int auth_pin_allowance=0);
-  void unfreeze_inode(std::list<MDSInternalContextBase*>& finished);
+  void unfreeze_inode(MDSInternalContextBase::vec& finished);
   void unfreeze_inode();
 
   void freeze_auth_pin();
